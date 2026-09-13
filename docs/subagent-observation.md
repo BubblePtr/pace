@@ -8,7 +8,15 @@ Pace 承载根 Pi 会话；Tintinweb 插件创建、调度和恢复进程内子�
 
 基线为 Pi SDK 0.84.3、Tintinweb 0.19.0（上游 commit `e955e29c51b7a6cce37e1108cd2d6c57a77e151c`）。原版可执行进程内前台/后台任务；完整观测和根会话收束要求适配版的宿主协议 v1。
 
-适配源码本次在独立的 `pi-subagents` 工作目录交付，尚未提交、推送或发布到 npm。不能将 npm 上的 0.19.0 当成支持本协议的版本。已构建的本地归档名为 `pi-subagents-0.19.0-pace-host-v1.tgz`，SHA-256 为 `6ef23e3ce7ccd9ddf3bd921ba4a1c55746334a47c1a6d9d9504f1f0c0e7cadfe`；这是交付文件的标识，包内仍保留上游版本号，并非新的上游发布。
+适配源码位于 [BubblePtr/pi-subagents PR #1](https://github.com/BubblePtr/pi-subagents/pull/1)，固定 commit 为 `6e8b946804e6be520b71f5e15f88034618b1060f`。使用 Pi 的 Git 包来源启用此版本：
+
+```text
+git:github.com/BubblePtr/pi-subagents@6e8b946804e6be520b71f5e15f88034618b1060f
+```
+
+可将来源添加到所选项目的 `.pi/settings.json` 的 `packages` 列表，或在该项目运行 `pi install -l <上述来源>`；保留其他已有配置。此 commit 固定了适配版本，后续更新需要明确更换 ref。
+
+尚未向 npm 发布，不能将 npm 上的 0.19.0 当成支持本协议的版本。此前构建的本地归档 `pi-subagents-0.19.0-pace-host-v1.tgz` 对应相同适配源码，SHA-256 为 `6ef23e3ce7ccd9ddf3bd921ba4a1c55746334a47c1a6d9d9504f1f0c0e7cadfe`；包内仍保留上游版本号，并非新的上游发布。
 
 本次不改写用户的全局扩展设置。试用时在独立 agent 目录或项目配置启用适配版，为新会话加载；同一会话避免同时加载两个注册同名 Agent 工具的子代理插件。卸载旧插件不会自动删除其历史。
 
