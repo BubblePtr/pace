@@ -1428,6 +1428,7 @@ function ChatRunFailureGallery() {
 function ChatPromptInputGallery() {
   return (
     <GallerySection title="ChatPromptInput">
+      <Text type="supporting">Steady outer-only elevation; no border, inset ring, or hover / focus deepening.</Text>
       <VariantRow>
         <PromptInputDemo caption="status=ready (empty)" />
         <SuggestionFocusDemo />

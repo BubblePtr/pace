@@ -741,8 +741,8 @@
 
 /* —— Prompt input ——
    Shell, slot layout, send/stop button, and error status are owned by
-   Astryx ChatComposer; only the native textarea, body padding, the
-   input-to-footer gap, and the neutral footer hint remain ours. */
+   Astryx ChatComposer; the native textarea, body padding, steady outer-only
+   elevation, input-to-footer gap, and neutral footer hint remain ours. */
 
 .prompt-input {
   display: flex;
@@ -752,8 +752,13 @@
 }
 
 .prompt-input .astryx-chat-composer {
-  /* Default --spacing-3 minus the 1px inset border reads as 11px.
-     One step down so the chrome sits closer to the edge. */
+  /* Neutral's elevation tokens include an inset highlight in dark mode.
+     Keep the outer-only replacement local to the composer, not TextInput. */
+  --_composer-shadow-color: var(--color-shadow);
+  --shadow-low: 0 var(--border-width) var(--spacing-0-5) var(--_composer-shadow-color),
+    0 var(--spacing-0-5) var(--spacing-2) var(--_composer-shadow-color);
+  /* One step below Astryx's default so the chrome sits closer to the edge.
+     The elevated shell has no border; the total content inset is unchanged. */
   --_chat-composer-padding: var(--spacing-2);
   /* Astryx pairs --radius-chat (28) with --spacing-3 (12) so the 32px
      send button stays a circle: 28 − 12 = 16. Padding dropped one step,
@@ -764,7 +769,7 @@
 }
 
 .prompt-input[data-drop] .astryx-chat-composer {
-  box-shadow: 0 0 0 1px var(--color-accent);
+  --_composer-shadow-color: color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 
 /* Astryx balanced density uses --spacing-2 between the input and the
@@ -772,6 +777,19 @@
    don't sit on the same visual band. */
 .prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea) {
   gap: var(--spacing-3);
+  /* Override Astryx's hover/focus elevation without changing the geometry. */
+  box-shadow: var(--shadow-low);
+}
+
+/* Preserve a focus indicator when the OS suppresses shadows. */
+@media (forced-colors: active) {
+  .prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea) {
+    outline: var(--border-width) solid CanvasText;
+  }
+  .prompt-input .astryx-chat-composer > div:has(.prompt-input__textarea):focus-within {
+    outline: var(--spacing-0-5) solid Highlight;
+    outline-offset: var(--spacing-0-5);
+  }
 }
 
 .prompt-input__textarea {
