@@ -9,6 +9,65 @@ import test from "node:test";
 
 const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const runtimeSource = resolve(process.env.PACE_TEST_RUNTIME_DIR ?? join(repo, "apps/desktop/out/main/runtime"));
+
+test("an independent SDK derives subscription auth from stored credentials", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pace-extension-oauth-"));
+  try {
+    await cp(runtimeSource, root, { recursive: true });
+    const agentDir = join(root, "agent");
+    await mkdir(agentDir);
+    await writeFile(join(agentDir, "auth.json"), JSON.stringify({
+      "openai-codex": { type: "oauth", access: "fixture-access", refresh: "fixture-refresh",
+        expires: Date.now() + 3_600_000, accountId: "fixture-account" },
+    }));
+    await writeFile(join(root, "probe.mjs"), `
+      import assert from 'node:assert/strict';
+      import { ModelRuntime } from '@earendil-works/pi-coding-agent';
+      globalThis.fetch = () => { throw new Error('OAuth fixture must not use the network'); };
+      const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
+      const result = await runtime.getAuth('openai-codex');
+      assert.equal(result?.auth.apiKey, 'fixture-access');
+      console.log('SDK_OAUTH_OK');
+    `);
+    const { stdout } = await run(process.execPath, [join(root, "probe.mjs")], {
+      cwd: root,
+      env: { HOME: root, PATH: "", PI_CODING_AGENT_DIR: agentDir,
+        PI_PACKAGE_DIR: join(root, "node_modules/@earendil-works/pi-coding-agent") },
+      timeout: 30_000,
+    });
+    assert.match(stdout, /SDK_OAUTH_OK/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the standalone provider entry loads every built-in OAuth flow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pace-provider-oauth-"));
+  try {
+    await cp(runtimeSource, root, { recursive: true });
+    await writeFile(join(root, "probe.mjs"), `
+      import assert from 'node:assert/strict';
+      import { builtinProviders, radiusProvider } from '@earendil-works/pi-ai/providers/all';
+      globalThis.fetch = () => { throw new Error('OAuth fixture must not use the network'); };
+      const credential = { type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3_600_000 };
+      const providers = [...builtinProviders(), radiusProvider({ gateway: 'https://radius.example.test' })]
+        .filter(provider => provider.auth.oauth);
+      assert.ok(providers.some(provider => provider.id === 'openai-codex'));
+      for (const provider of providers) {
+        const auth = await provider.auth.oauth.toAuth(credential);
+        assert.equal(auth.apiKey ?? auth.headers?.Authorization?.replace(/^Bearer /, ''), credential.access, provider.id);
+      }
+      console.log('PROVIDER_OAUTH_OK', providers.length);
+    `);
+    const { stdout } = await run(process.execPath, [join(root, "probe.mjs")], {
+      cwd: root, env: { HOME: root, PATH: "" }, timeout: 30_000,
+    });
+    assert.match(stdout, /PROVIDER_OAUTH_OK/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("an independent Node process can use the shipped SDK and its peer exports", async () => {
   const root = await mkdtemp(join(tmpdir(), "pace-extension-sdk-"));

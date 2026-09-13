@@ -26,10 +26,20 @@ function importTarget(value: unknown): string | undefined {
   }
 }
 
-export function piRuntimeBundle(piRoot: string): { input: Record<string, string>; plugin: Plugin } {
+export function piRuntimeBundle(piRoot: string, backendEntry: string): { input: Record<string, string>; plugin: Plugin } {
   const requireFromPi = createRequire(join(piRoot, "package.json"));
   const input: Record<string, string> = {};
   const manifests: Array<{ directory: string; source: string; content: object }> = [];
+  const oauthBootstrap = "\0pace-pi-oauth-bootstrap";
+  const virtualModules = new Map<string, string>();
+
+  function initializedEntry(entry: string, original: string): string {
+    const id = `\0pace-pi-entry:${entry}`;
+    virtualModules.set(id, `import ${JSON.stringify(oauthBootstrap)};\nexport * from ${JSON.stringify(original)};`);
+    return id;
+  }
+
+  input[piBackendEntry] = initializedEntry(piBackendEntry, backendEntry);
 
   for (const [name, subpaths] of Object.entries(peerExports)) {
     const source = name === "@earendil-works/pi-coding-agent" ? piRoot
@@ -37,6 +47,15 @@ export function piRuntimeBundle(piRoot: string): { input: Record<string, string>
         .find((directory) => existsSync(join(directory, "package.json")));
     if (!source) throw new Error(`Missing Pi runtime peer: ${name}`);
     const pkg = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
+    if (name === "@earendil-works/pi-ai") {
+      // Resolve the public bundling API so Pi owns its private OAuth file layout.
+      const oauthTarget = importTarget(pkg.exports?.["./bun-oauth"]);
+      if (!oauthTarget) throw new Error("Missing Pi runtime export: @earendil-works/pi-ai/bun-oauth");
+      virtualModules.set(oauthBootstrap, `
+        import { registerBunOAuthFlows } from ${JSON.stringify(realpathSync(join(source, oauthTarget)))};
+        registerBunOAuthFlows();
+      `);
+    }
     const directory = `runtime/node_modules/${name}`;
     const exports: Record<string, string> = {};
     for (const subpath of subpaths) {
@@ -45,8 +64,15 @@ export function piRuntimeBundle(piRoot: string): { input: Record<string, string>
       const target = importTarget(entry);
       if (!target) throw new Error(`Missing Pi runtime export: ${name} ${subpath}`);
       const filename = subpath === "." ? "index" : subpath.slice(2);
-      input[`${directory}/${filename}`] = realpathSync(join(source,
+      const original = realpathSync(join(source,
         wildcard ? target.replace("*", subpath.slice(wildcard.length - 1)) : target));
+      const outputEntry = `${directory}/${filename}`;
+      if (name === "@earendil-works/pi-coding-agent" || name === "@earendil-works/pi-ai") {
+        // Independent consumers do not run Pace's backend. Initialize once per module graph.
+        input[outputEntry] = initializedEntry(outputEntry, original);
+      } else {
+        input[outputEntry] = original;
+      }
       exports[subpath] = `./${filename}.js`;
     }
     manifests.push({ directory, source, content: {
@@ -57,6 +83,12 @@ export function piRuntimeBundle(piRoot: string): { input: Record<string, string>
 
   return { input, plugin: {
     name: "pace-pi-runtime-packages",
+    resolveId(id) {
+      if (virtualModules.has(id)) return id;
+    },
+    load(id) {
+      return virtualModules.get(id);
+    },
     async writeBundle(options) {
       if (!options.dir) throw new Error("Pi runtime output directory is required");
       for (const pkg of manifests) {

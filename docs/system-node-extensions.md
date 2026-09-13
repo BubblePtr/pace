@@ -33,6 +33,10 @@ Node 的作用是执行扩展的独立 runner；SDK 仍来自 Pace 固定的 Pi 
 
 构建产物为 SDK 及需要的 peers 提供真实 package.json 和 ESM 入口，入口之间共享 bundle chunks。它不是完整 npm 依赖树，也不为某个插件替换启动函数。
 
+构建选择公开导出，通过原包的 `package.json` 解析实际入口，再由打包器追踪静态依赖；没有逐个选择 OAuth 的内部实现文件。Pi 为隔离 Node 专用代码而使用的变量动态导入不能被打包器追踪，因此入口还需要调用 Pi 公开的 `@earendil-works/pi-ai/bun-oauth` 注册函数。构建为后端、SDK 和 pi-ai 的公开入口接入同一个初始化模块，每个独立进程都会执行，不依赖父进程先创建 Pace 服务。
+
+OAuth 实现的路径和完整列表由 Pi 的公开打包入口维护。SDK 内部移动文件而保持公开导出不变时，Pace 无需跟随内部路径；公开接口发生变化时，仍需按固定版本升级并重新验收。主题和 WASM 等非模块资源继续由构建单独复制。这种分发提供已声明入口的兼容性，不等同于完整 npm 包目录或任意动态子路径均可读取。
+
 后端入口位于 `@earendil-works/pi-coding-agent` 包目录内，因此现有扩展能从进程入口找到真实 Pi 包根。Electron 安装包把这些入口和共享 chunks 放在 `app.asar.unpacked/out/main/runtime`，使普通 Node 也能读取它们；通过 `PI_PACKAGE_DIR` 定位 Pi 必需的运行资源。
 
 electron-builder 会忽略普通 files 中嵌套的 node_modules，所以打包配置显式复制构建生成的公开入口包。仅复制这些入口，不遍历或分发原 npm 生产依赖树。
@@ -62,6 +66,8 @@ PACE_E2E_EXECUTABLE=dist/mac-arm64/Pace.app/Contents/MacOS/Pace \
 ```
 
 测试隔离 HOME、TMPDIR、Pi 配置、工作目录及 App 数据。通过生产会话入口调用原版 `subagent({ async: true })`，检查后台状态、真实进程退出、子会话用量和父会话完成通知，并校验插件源码未修改。模型使用本地固定 SSE 响应，不消耗真实模型额度。
+
+后台测试分别使用 API Key 与 OpenAI Codex OAuth 假凭据；后者经过真实的订阅认证派生和 Responses 请求路径，验证父、子请求都携带预期认证。独立产物测试另外覆盖 SDK 从 `auth.json` 派生认证，以及仅加载公开 provider 入口时所有内置 OAuth 流程的认证派生。这些测试不执行真实登录或令牌刷新。
 
 当前验收为 macOS arm64 的本地未签名 App。系统 Node 路径本机验证为 Homebrew Node 25.9.0；Pi SDK 0.84.3、pi-subagents 0.67.0。这不等于完成所有 Node 版本或平台的矩阵验证。签名、公证、真实账号，以及 steer/stop/resume 和多步骤工作流仍有各自的验收范围。
 

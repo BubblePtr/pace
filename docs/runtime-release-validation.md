@@ -27,7 +27,17 @@ bun run test:e2e:packaged:mac e2e/smoke/m5-2-preflight.spec.ts
 - `session_start` 和原生命令处理器实际执行。
 - 故意损坏的扩展产生加载诊断，首次创建响应及后续历史读取都能看到错误。
 - 仓库外的独立 Node 能通过公开 SDK/peer 入口创建真实 Pi 会话，并保持 SDK 与 peer 类型身份一致。
+- 独立 SDK 从隔离的 `auth.json` 读取 Codex OAuth 假凭据并派生请求认证；只加载公开 provider 入口时，所有内置 OAuth 流程也能执行认证派生。禁止网络访问，避免用 import 成功代替实际认证行为。
 - 缺少扩展 Node 时有明确的可选诊断，内置 Pi 的必需检查仍通过。
+
+最终安装包中的运行时也可执行同一组 OAuth 检查：
+
+```sh
+PACE_TEST_RUNTIME_DIR=dist/mac-arm64/Pace.app/Contents/Resources/app.asar.unpacked/out/main/runtime \
+  node --test --test-name-pattern='subscription auth|OAuth flow' scripts/test-bundled-runtime.mjs
+```
+
+设置 `PACE_TEST_SUBAGENTS_DIR` 后，`e2e/smoke/extension-runner.spec.ts` 用原版插件分别验证 API Key 和 Codex OAuth 后台执行。OAuth 场景使用假凭据与本地 Responses SSE 服务，覆盖主会话、独立 Node 子会话的实际认证请求与完成回传；可以结合 `PACE_E2E_EXECUTABLE` 在最终安装包运行。
 
 单元与集成测试另外覆盖创建／恢复／分叉的扩展绑定、初始化失败清理、分叉历史与启动事件的顺序、非致命错误在后端投影和前端状态中的处理，以及原生包清单、禁用规则、包内技能和只读查询。
 

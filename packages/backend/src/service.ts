@@ -13,7 +13,6 @@ import type {
   RuntimeGatewayEventEnvelope,
 } from "@pace/core";
 import * as piSdk from "@earendil-works/pi-coding-agent";
-import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import {
   addLocalResource,
   removeLocalResource,
@@ -125,11 +124,6 @@ export type BackendServiceOptions = {
 };
 
 export function createBackendService(options: BackendServiceOptions = {}): BackendService {
-  // Pi 0.84 lazy-loads OAuth flows through a variable import specifier that
-  // bundlers cannot follow; in the bundled backend the runtime chunk path does
-  // not exist, so Codex/Anthropic subscription auth fails at request time.
-  // Register the statically bundled flows so the lazy loaders resolve locally.
-  registerBunOAuthFlows();
   const agentDir = options.agentDir ?? resolveAgentDir();
   const dataDir = options.dataDir ?? resolveDataDir(process.env, homedir());
   const sessionCache = options.sessionCache ?? createSessionIndexCache();

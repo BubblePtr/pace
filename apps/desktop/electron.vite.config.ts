@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
-import { piBackendEntry, piRuntimeBundle } from "./build/pi-runtime-bundle";
+import { piRuntimeBundle } from "./build/pi-runtime-bundle";
 
 // The @pace/* workspace packages are internal TS source, not external runtime
 // deps — bundle them into the main/preload output so the utilityProcess can find
@@ -24,7 +24,7 @@ const appPackage = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "
 const photonWasmPath = requireFromPi.resolve(
   "@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 );
-const piRuntime = piRuntimeBundle(piPackageDirectory);
+const piRuntime = piRuntimeBundle(piPackageDirectory, resolve(__dirname, "electron/backend.ts"));
 
 function copyMainRuntimeAssets(): Plugin {
   return {
@@ -47,7 +47,6 @@ const mainBuild = {
   rollupOptions: {
     input: {
       main: resolve(__dirname, "electron/main.ts"),
-      [piBackendEntry]: resolve(__dirname, "electron/backend.ts"),
       ...piRuntime.input,
     },
     preserveEntrySignatures: "strict",
