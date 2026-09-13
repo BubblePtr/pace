@@ -2,16 +2,6 @@ import { expect, test } from "@playwright/test";
 import { launchPace } from "../fixtures/electron-app";
 
 test.describe("M5.2: First-run preflight", () => {
-  test("missing extension Node is diagnosed without blocking the embedded engine", async ({}, testInfo) => {
-    const testApp = await launchPace({ requirePreflight: true, seedPreflightAuth: true, emptyPath: true,
-      environment: { PACE_NODE_PATH: "/missing/pace-test/node" },
-    });
-    try {
-      await expect(testApp.window.getByText("Background extensions need a compatible Node.js installation")).toBeVisible();
-      await expect(testApp.window.getByRole("button", { name: /Continue/i })).toBeEnabled();
-      await testApp.window.screenshot({ path: testInfo.outputPath("extension-node-missing.png"), fullPage: true });
-    } finally { await testApp.close(); }
-  });
   test("cold start reaches preflight and keeps provider settings usable before setup completes", async ({}, testInfo) => {
     const testApp = await launchPace({ requirePreflight: true });
 

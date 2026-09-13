@@ -22,12 +22,6 @@ files:
   - "node_modules/@lydell/**/*"
 
 extraResources:
-  # electron-builder's dependency collector omits nested node_modules from files.
-  # Copy only our generated public entry packages, alongside the unpacked shared chunks.
-  - from: apps/desktop/out/main/runtime/node_modules
-    to: app.asar.unpacked/out/main/runtime/node_modules
-    filter:
-      - "**/*"
   - from: docs/licenses
     to: licenses
     filter:
@@ -37,8 +31,6 @@ extraResources:
 # node-pty's spawn-helper is exec'd as a subprocess — unpack the whole scope.
 asarUnpack:
   - "node_modules/@lydell/**/*"
-  # Extension-owned Node children cannot read Electron's virtual asar filesystem.
-  - "out/main/runtime/**/*"
 
 artifactName: ${productName}-${version}-${arch}.${ext}
 

@@ -14,19 +14,6 @@ async function tempRoots() {
 }
 
 describe("environment preflight", () => {
-  it("reports missing extension Node without blocking ordinary Pi sessions", async () => {
-    const { agentDir, dataDir } = await tempRoots();
-    await writeFile(join(agentDir, "auth.json"), JSON.stringify({ openai: { type: "api_key", key: "test-key" } }));
-    const reader = createEnvironmentPreflightReader({ agentDir, dataDir,
-      env: { PATH: "", PACE_NODE_PATH: join(dataDir, "missing-node") },
-    });
-    const report = await reader.run();
-    expect(report.canContinue).toBe(true);
-    expect(report.checks.find(check => check.id === "extension_node")).toMatchObject({
-      severity: "optional", status: "fail", detail: expect.stringContaining("PACE_NODE_PATH"),
-    });
-    expect(report.checks.find(check => check.id === "extension_node")?.detail).toContain(join(dataDir, "missing-node"));
-  });
   it("uses the bundled SDK without requiring or reporting a global pi CLI", async () => {
     const { agentDir, dataDir } = await tempRoots();
     await writeFile(
@@ -52,7 +39,6 @@ describe("environment preflight", () => {
       "pi_runtime",
       "data_directory",
       "model_auth",
-      "extension_node",
       "git",
     ]);
     expect(report.checks.find((check) => check.id === "git")?.status).toBe("pass");

@@ -46,14 +46,19 @@ test("Terminal surface runs a real shell, multi-instance, with replay", async ()
 
     const viewport = window.getByTestId("terminal-viewport");
     const rows = viewport.locator(".xterm-rows");
+    const input = viewport.getByRole("textbox", { name: "Terminal input", exact: true });
 
     await expect(aside.getByRole("tab", { name: "Terminal 1" })).toBeVisible();
     await expect(rows).not.toHaveText(/^\s*$/, { timeout: 15_000 });
 
     // Input round-trip: type into xterm, the shell echoes the result back.
     await viewport.click();
-    await window.keyboard.type("echo E2E_PTY_ONE");
-    await window.keyboard.press("Enter");
+    await expect(input).toBeFocused();
+    // The output marker is absent from the command, so local echo cannot satisfy it.
+    const firstCommand = "printf 'E2E_PTY_%s\\n' ONE";
+    await input.pressSequentially(firstCommand);
+    await expect(rows).toContainText(firstCommand);
+    await input.press("Enter");
     await expect(rows).toContainText("E2E_PTY_ONE");
 
     // A second instance gets its own shell; output stays independent.
@@ -63,8 +68,11 @@ test("Terminal surface runs a real shell, multi-instance, with replay", async ()
 
     await expect(secondTab).toBeVisible();
     await viewport.click();
-    await window.keyboard.type("echo E2E_PTY_TWO");
-    await window.keyboard.press("Enter");
+    await expect(input).toBeFocused();
+    const secondCommand = "printf 'E2E_PTY_%s\\n' TWO";
+    await input.pressSequentially(secondCommand);
+    await expect(rows).toContainText(secondCommand);
+    await input.press("Enter");
     await expect(rows).toContainText("E2E_PTY_TWO");
     await expect(rows).not.toContainText("E2E_PTY_ONE");
 

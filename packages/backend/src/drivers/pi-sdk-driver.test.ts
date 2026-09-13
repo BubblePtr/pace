@@ -7,6 +7,36 @@ import {
 } from "./pi-sdk-driver";
 
 describe("Pi SDK driver", () => {
+  it("drains in-flight session creation during shutdown and rejects new work", async () => {
+    let release!: (runtime: PiSdkSessionRuntime) => void;
+    const factory = vi.fn(() => new Promise<PiSdkSessionRuntime>(resolve => { release = resolve; }));
+    const driver = createPiSdkDriver({ runtimeFactory: factory });
+    const creating = driver.createSession({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    const rejected = expect(creating).rejects.toThrow("closing");
+    let done = false;
+    const closing = driver.dispose!().then(() => { done = true; });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    const runtime: PiSdkSessionRuntime = { piSessionId: "pi-new", runtimeId: "new", status: "idle", sendPrompt: async () => {}, dispose: vi.fn() };
+    release(runtime);
+    await rejected;
+    await closing;
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    await expect(driver.createSession({ sessionId: "late", projectId: "p", cwd: "/repo" })).rejects.toThrow("closing");
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("reattaches to a live root without replacing its child-session owner", async () => {
+    const runtime: PiSdkSessionRuntime = { piSessionId: "pi-live", runtimeId: "runtime-live", status: "idle", sendPrompt: async () => {}, getSnapshot: async () => ({ status: "running" }) };
+    const resume = vi.fn(async () => runtime);
+    const driver = createPiSdkDriver({ runtimeFactory: async () => runtime, runtimeResumer: resume });
+    await driver.createSession({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    const snapshot = await driver.resumeSession({ sessionId: "app", projectId: "p", cwd: "/repo", piSessionId: "pi-live", sessionFile: "/session.jsonl" });
+    expect(snapshot.status).toBe("running");
+    expect(resume).not.toHaveBeenCalled();
+    await driver.dispose?.();
+  });
+
   it("constructs without a real SDK runtime and reports unsupported setup errors", async () => {
     const driver = createPiSdkDriver();
 

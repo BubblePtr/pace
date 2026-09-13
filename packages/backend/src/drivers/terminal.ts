@@ -156,10 +156,8 @@ export function createTerminalManager(
   return {
     async create(input) {
       if (!spawnPty) {
-        // Resolve the desktop-only native dependency at runtime. node-pty
-        // rewrites app.asar to app.asar.unpacked for its spawn helper, so use
-        // the archive path even when this backend already runs outside asar.
-        const requireFromDesktop = createRequire(import.meta.url.replace("/app.asar.unpacked/", "/app.asar/"));
+        // node-pty resolves its native files and spawn helper outside the archive.
+        const requireFromDesktop = createRequire(import.meta.url);
         const nodePtySpecifier = "@lydell/node-pty";
         const nodePty = requireFromDesktop(nodePtySpecifier) as NodePtyModule;
 

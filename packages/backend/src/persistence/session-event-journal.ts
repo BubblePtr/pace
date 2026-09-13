@@ -50,6 +50,7 @@ export function migrateDataDir(env: NodeJS.ProcessEnv, homeDir: string): string 
 
 export type SessionEventJournal = {
   append(envelope: RuntimeGatewayEventEnvelope): void;
+  flush?(): Promise<void>;
   read(piSessionId: string): Promise<RuntimeGatewayEventEnvelope[]>;
 };
 
@@ -282,6 +283,7 @@ export function createFileSessionEventJournal(
   };
 
   return {
+    flush: () => pendingWrites,
     append(envelope) {
       bufferFor(envelope.piSessionId).push(cloneEnvelope(envelope));
 

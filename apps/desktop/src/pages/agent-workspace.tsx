@@ -1,6 +1,7 @@
 import { Button } from "@astryxdesign/core/Button";
 import { Collapsible, CollapsibleGroup } from "@astryxdesign/core/Collapsible";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { HStack } from "@astryxdesign/core/HStack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Popover } from "@astryxdesign/core/Popover";
@@ -56,6 +57,8 @@ import {
 } from "@/shared/ui/session-dock/surface-registry";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
+  createContext,
+  useContext,
   type CSSProperties,
   lazy,
   type ReactNode,
@@ -66,7 +69,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { RuntimePromptImage, SessionChangedFile, SessionChanges } from "@pace/core";
+import type { RuntimePromptImage, SessionChangedFile, SessionChanges, SubagentRecord } from "@pace/core";
 import { promptImageDataUrl } from "@pace/core";
 import { Thumbnail } from "@astryxdesign/core/Thumbnail";
 import { AppFrame, defaultSidebarProjectSessionProjections } from "@/app/app-shell";
@@ -74,6 +77,7 @@ import { NoProvidersEmptyState } from "@/entities/session/no-providers-empty-sta
 import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-status";
 import { invoke } from "@/shared/runtime";
 import {
+  Stop,
   Box,
   ChatAdd,
   Check,
@@ -176,6 +180,8 @@ import {
 } from "@/entities/session/session-change-link";
 import type { TerminalInstanceInfo } from "@/entities/terminal/terminal-client";
 import { SessionBrowserPanel } from "@/pages/session-browser-panel";
+import { useSubagents } from "@/entities/runtime/use-subagents";
+import { SessionSubagentsPanel } from "@/pages/session-subagents-panel";
 import { SessionFilesPanel } from "@/pages/session-files-panel";
 import { SessionTerminalPanel } from "@/pages/session-terminal-panel";
 import { useSettingsDialog } from "@/shared/settings-navigation";
@@ -184,6 +190,8 @@ import {
   useSessionProjections,
   useSessionProjectionsOptional,
 } from "@/entities/session/use-session-projections";
+
+const SubagentNavigationContext = createContext<{ records: SubagentRecord[]; onSelect: (id: string) => void; activity?: ReactNode }>({ records: [], onSelect: () => {} });
 
 type LiveMessage = {
   id: string;
@@ -357,6 +365,9 @@ function LiveChatMessage({
   onForkMessage?: (message: LiveMessage) => void;
   recovery?: ReactNode;
 }) {
+  const subagents = useContext(SubagentNavigationContext);
+  const toolCallIds = new Set(message.cotView?.steps.flatMap((step) => step.kind === "tools" ? step.tools.map((tool) => tool.toolCallId) : []) ?? []);
+  const delegated = subagents.records.filter((record) => !record.parentAgentId && record.toolCallId && toolCallIds.has(record.toolCallId));
   if (message.role === "user") {
     const canFork = Boolean(message.piEntryId && onForkMessage);
 
@@ -433,6 +444,9 @@ function LiveChatMessage({
         {!message.controlLabel && message.cotView ? (
           <AssistantRunTrajectory view={message.cotView} />
         ) : null}
+        {delegated.length ? <HStack gap={1} className="flex-wrap">
+          {delegated.map((record) => <Button key={record.id} id={`subagent-link-${record.id}`} label={`View ${record.type} subagent`} size="sm" variant="ghost" onClick={() => subagents.onSelect(record.id)} />)}
+        </HStack> : null}
         {message.body ? (
           <ChatMessage.Content>
             <AssistantMessageContent message={message} />
@@ -2534,7 +2548,9 @@ function SessionSurfaceContent({
   docked = false,
   onTerminalInstancesChange,
   onBrowserInstancesChange,
+  subagentsPanel,
 }: {
+  subagentsPanel?: ReactNode;
   surfaceId: SessionSurfaceId;
   projection?: SessionProjection | null;
   changeTarget?: SessionChangeTarget | null;
@@ -2544,6 +2560,8 @@ function SessionSurfaceContent({
   onTerminalInstancesChange?: (instances: TerminalInstanceInfo[]) => void;
   onBrowserInstancesChange?: (instances: import("@/shared/browser-protocol").BrowserTabState[]) => void;
 }) {
+  if (surfaceId === "subagents") return subagentsPanel;
+
   if (surfaceId === "changes") {
     return (
       <SessionChangesPanel
@@ -2674,13 +2692,36 @@ export function SessionToolbarActions({
   dockOpen?: boolean;
   onDockOpenChange?: (isOpen: boolean) => void;
 }) {
+  return <SessionDockTrigger alignToRail isOpen={dockOpen} onOpenChange={onDockOpenChange} />;
+}
+
+export function SubagentActivityControls({
+  activeSubagentCount,
+  onOpenSubagents,
+  onStopWork,
+  isStopping = false,
+  error,
+}: {
+  error?: string | null;
+  activeSubagentCount: number;
+  onOpenSubagents: () => void;
+  onStopWork: () => void;
+  isStopping?: boolean;
+}) {
+  if (!activeSubagentCount && !error) return null;
   return (
-    <SessionDockTrigger
-      alignToRail
-      isOpen={dockOpen}
-      onOpenChange={onDockOpenChange}
-    />
+    <>
+    <HStack gap={2} vAlign="center" hAlign="between" className="shrink-0 border-b border-separator px-4 py-1" data-testid="subagent-activity-controls">
+      <Button label={`${activeSubagentCount} active subagents`} size="sm" variant="ghost" onClick={onOpenSubagents} />
+      <IconButton label="Stop all work" icon={<Stop className="size-4" />} size="sm" variant="ghost" isDisabled={isStopping} onClick={onStopWork} />
+    </HStack>
+    {error ? <p role="alert" className="shrink-0 px-4 py-2 text-sm text-danger">{error}</p> : null}
+    </>
   );
+}
+
+function SubagentActivity() {
+  return useContext(SubagentNavigationContext).activity;
 }
 
 function LiveSessionColumn({
@@ -3661,6 +3702,7 @@ function LiveSessionColumn({
               ) : null}
             </div>
           ) : null}
+          <SubagentActivity />
           <ChatConversation
             aria-label="Live Chat messages"
             className="pigui-draft-handoff__chat min-h-0 flex-1"
@@ -4061,6 +4103,10 @@ export function AgentWorkspaceSessionsPage() {
   // Open state and the active surface are Workspace-level, so switching
   // Sessions keeps the dock where the user left it.
   const [dockOpen, setDockOpen] = useState(false);
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
+  const [stoppingSubagents, setStoppingSubagents] = useState(false);
+  const [subagentStopError, setSubagentStopError] = useState<string | null>(null);
+  const subagentControlGeneration = useRef(0);
   // Terminal/Browser own live pty / WebContentsView instances, so the closed
   // dock cannot stay mounted; keep it only through the exit transition.
   const dockMounted = useSessionDockPresence(dockOpen);
@@ -4080,6 +4126,21 @@ export function AgentWorkspaceSessionsPage() {
       (projection) =>
         projection.id === selectedSessionId && projection.projectId === projectId,
     ) ?? null;
+  const subagents = useSubagents(!showDraft ? selectedSessionProjection?.piSessionId ?? null : null, backendGeneration);
+  const openSubagent = (id: string | null) => {
+    setSelectedSubagentId(id);
+    setActiveSurfaceId("subagents");
+    setDockOpen(true);
+  };
+  const stopAllWork = async () => {
+    if (!selectedSessionProjection?.piSessionId || stoppingSubagents) return;
+    const generation = subagentControlGeneration.current;
+    setStoppingSubagents(true);
+    setSubagentStopError(null);
+    try { await invoke("stop_run", { piSessionId: selectedSessionProjection.piSessionId }); }
+    catch (error) { if (generation === subagentControlGeneration.current) setSubagentStopError(error instanceof Error ? error.message : String(error)); }
+    finally { if (generation === subagentControlGeneration.current) setStoppingSubagents(false); }
+  };
   const emptyChatDraft =
     registryProjects.length === 0 &&
     isChatProjectId(projectId) &&
@@ -4133,6 +4194,10 @@ export function AgentWorkspaceSessionsPage() {
   );
 
   useEffect(() => {
+    subagentControlGeneration.current += 1;
+    setStoppingSubagents(false);
+    setSelectedSubagentId(null);
+    setSubagentStopError(null);
     setTerminalInstanceCount(0);
     setBrowserInstanceCount(0);
     setChangeTarget(null);
@@ -4291,6 +4356,11 @@ export function AgentWorkspaceSessionsPage() {
           sessionChanges.refresh();
         }}
       >
+      <SubagentNavigationContext value={{
+        records: subagents.records,
+        onSelect: openSubagent,
+        activity: <SubagentActivityControls activeSubagentCount={subagents.activeCount} onOpenSubagents={() => openSubagent(null)} onStopWork={() => void stopAllWork()} isStopping={stoppingSubagents} error={subagentStopError} />,
+      }}>
       <AgentWorkspaceSessionsView
         sessionChanges={sessionChanges}
         asideOpen={!showDraft && dockOpen}
@@ -4299,6 +4369,7 @@ export function AgentWorkspaceSessionsPage() {
             <SessionDock
               activeSurfaceId={activeSurfaceId}
               badges={{
+                subagents: subagents.records.length ? String(subagents.activeCount || subagents.records.length) : undefined,
                 changes: sessionChangesBadge(sessionChanges.changes),
                 terminal:
                   terminalInstanceCount > 0 ? String(terminalInstanceCount) : undefined,
@@ -4310,6 +4381,24 @@ export function AgentWorkspaceSessionsPage() {
             >
               <SessionSurfaceContent
                 docked
+                subagentsPanel={<SessionSubagentsPanel
+                  key={selectedSessionProjection?.piSessionId}
+                  piSessionId={selectedSessionProjection?.piSessionId ?? null}
+                  records={subagents.records}
+                  available={subagents.data?.available ?? false}
+                  loading={subagents.loading}
+                  error={subagents.error}
+                  onRefresh={subagents.refresh}
+                  selectedAgentId={selectedSubagentId}
+                  onSelectedAgentChange={setSelectedSubagentId}
+                  onParentNavigate={(record) => {
+                    setDockOpen(false);
+                    const link = document.getElementById(`subagent-link-${record.id}`);
+                    link?.scrollIntoView({ block: "center" });
+                    link?.focus();
+                  }}
+                  runtimeGeneration={backendGeneration}
+                />}
                 changeTarget={changeTarget}
                 sessionChanges={sessionChanges}
                 surfaceId={activeSurfaceId}
@@ -4334,6 +4423,7 @@ export function AgentWorkspaceSessionsPage() {
         onManageModels={() => openSettings("models")}
         onOpenProviderSettings={() => openSettings("providers")}
       />
+      </SubagentNavigationContext>
       </div>
     </AppFrame>
   );

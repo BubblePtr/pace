@@ -347,6 +347,7 @@ function mapEnvelopeToRuntimeEvent(
   envelope: RuntimeGatewayEventEnvelope,
   compat: AgentEventCompatMapper,
 ): PiRuntimeEvent | null {
+  if (envelope.type === "subagent_record" || envelope.payload.type === "subagent_record") return null;
   if (isAgentRuntimeEventPayload(envelope.payload)) {
     return compat(envelope);
   }
@@ -623,6 +624,8 @@ export function createRuntimeGatewayClient(
       if (["workspace.invalidated", "terminal_output", "terminal_exit"].includes(event.event.type)) {
         return;
       }
+
+      if (event.event.type === "subagent_record" || event.event.payload.type === "subagent_record") return;
 
       // Session metadata is consumed by the list provider, not the run timeline.
       if (event.event.payload.type === "session_info_changed") {

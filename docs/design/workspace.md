@@ -2,7 +2,7 @@
 
 ## Session Dock（会话页右栏）
 
-`SessionDock` 是 surface 宿主：面板 + 贴右缘的 44px 图标 rail。`activeSurfaceId: "changes" | "files" | "terminal" | "browser"`，联合定义在 `session-dock/surface-registry.ts:12`，就这四个。
+`SessionDock` 是 surface 宿主：面板 + 贴右缘的 44px 图标 rail。`activeSurfaceId: "changes" | "files" | "terminal" | "browser" | "subagents"`，联合定义在 `session-dock/surface-registry.ts:12`，对应五种会话 surface。
 
 新增一个 surface 的三步：`surface-registry.ts` 加元数据（id / title / icon / hint / `multiInstance` / `flushContent`）→ 页面注入内容 → 页面给 `badges` 供数（干净树、非 Git、加载中、读取失败都传 `undefined`，不传 `"0"`）。注册表只存元数据，不依赖 Session 状态。
 
@@ -116,3 +116,14 @@ import { Terminal, Search } from "@/shared/ui/icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Search01Icon } from "@hugeicons/core-free-icons";
 ```
+
+
+## Subagents（SessionSubagentsPanel）
+
+主会话 Dock 内的子会话观测面板。列表使用 Astryx List/ListItem，通过缩进呈现父子所属关系；每行显示代理类型、任务描述、状态 Token、当前工具、耗时与实际用量，不使用卡片包裹列表。Workflow 归属直接显示插件提供的标识。缺失的用量或时长显示 unavailable，不伪造为零。
+
+详情复用 ChatMessage/ChatMarkdown 展示已记录的对话，Trace 将已有 SessionRuntimeModel 投影到共用 Trajectory 读模型，并复用 PiTrajectoryLedger/PiTrajectoryInspector 展示工具参数、结果、Schema、时序。运行中工具的增量结果在 Inspector 明确标注 Partial output，保留 running 状态，不生成完成时间。这里不解析插件私有 transcript，也不单独计算费用。中断执行显示明确提示并保留已记录事件。
+
+父助手回复根据正式 toolCallId 关联提供子会话按钮；详情支持返回父代理或主会话。关闭面板、切页只释放观察订阅，不能停止任务。停止选中子代理与定向消息分别调用后端子树 stop 与 steer 能力；停止中禁止重复控制，失败保留重试入口。父会话空闲且存在活动子代理时，主聊天顶部状态行仍显示活动数量、打开面板与 Stop all work 入口；标题栏仅保留 Dock 开关，避免覆盖 surface 的刷新动作；Dock rail 优先显示活动数，没有活动时显示历史记录数。
+
+快照之前建立订阅，按所属根会话和子代理 ID 隔离事件并按序号去重。切换会话时立即隐藏旧作用域的数据，刷新不丢弃仍可读取的历史；没有插件、没有子代理、加载、失败、无对话、无 Trace 与中断分别显示真实状态。

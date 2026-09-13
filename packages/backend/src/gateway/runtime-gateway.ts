@@ -1,3 +1,4 @@
+import type { SubagentObserver } from "../drivers/subagent-observer";
 import { homedir } from "node:os";
 import { access } from "node:fs/promises";
 import type {
@@ -111,6 +112,8 @@ export type PiRuntimeDriver = {
   configureModel?(input: ConfigureRuntimeModelInput): Promise<RuntimeModelControls>;
   resolveToolSchemas?(input: ResolveToolSchemasInput): Promise<RuntimeToolSchemas>;
   getSnapshot(piSessionId: string): Promise<RuntimeGatewaySnapshot>;
+  disposeSession?(piSessionId: string): Promise<void>;
+  dispose?(): Promise<void>;
   onEvent(listener: (event: RuntimeGatewayDriverEvent) => void): () => void;
 };
 
@@ -120,12 +123,16 @@ export type RuntimeGatewayBackendEvent = {
 };
 
 export type RuntimeGatewayService = {
+  publish(event: RuntimeGatewayEventInput): RuntimeGatewayEventEnvelope | null;
+  advanceSequence(events: RuntimeGatewayEventEnvelope[]): void;
+  flush(): Promise<void>;
   handleRequest(request: RuntimeGatewayRequest): Promise<RuntimeGatewayResponse>;
   onEvent(listener: (event: RuntimeGatewayBackendEvent) => void): () => void;
 };
 
 export type RuntimeGatewayServiceOptions = {
   driver: PiRuntimeDriver;
+  subagents?: SubagentObserver;
   // Boundary-event journal backing snapshot replay; without it snapshots
   // fall back to whatever events the driver reports (historically none).
   journal?: SessionEventJournal;
@@ -148,6 +155,7 @@ export function createRuntimeGatewayService(
   });
   const projectionWrites = createRuntimeEventProjectionWriter(options.projections);
   const initializationEvents = new Map<string, RuntimeGatewayDriverEvent[]>();
+  const requests = new Map<string, Promise<void>>();
 
   const emit = (event: RuntimeGatewayDriverEvent) => {
     const sessionId =
@@ -198,9 +206,33 @@ export function createRuntimeGatewayService(
   });
 
   return {
+    publish: emit,
+    advanceSequence(events) { nextEvent.advanceTo(events.reduce((seq, event) => Math.max(seq, event.seq), 0)); },
+    flush: () => projectionWrites.flush(),
     async handleRequest(request) {
+      const params = paramsRecord(request.params);
+      const piSessionId = typeof params.piSessionId === "string" ? params.piSessionId : undefined;
+      const bypassQueue = ["stop_run", "stop_subagent", "steer_subagent", "get_subagents", "get_subagent_snapshot"].includes(request.method);
+      const key = bypassQueue ? undefined : typeof params.sessionId === "string" ? params.sessionId
+        : piSessionId ? sessionIdsByPiSessionId.get(piSessionId) ?? piSessionId : undefined;
+      let release: (() => void) | undefined;
+      let current: Promise<void> | undefined;
+      let previous: Promise<void> | undefined;
+      let pendingClose: Promise<void> | undefined;
+      if (key) {
+        previous = requests.get(key);
+        current = new Promise<void>(resolve => { release = resolve; });
+        requests.set(key, current);
+        // Input hooks can await a child before accepting the user's prompt.
+        // Cancel that work before waiting on its metadata request to finish.
+        if (previous && request.method === "delete_session" && options.driver.disposeSession) {
+          const rootPiId = [...sessionIdsByPiSessionId].find(([, id]) => id === key)?.[0];
+          if (rootPiId) pendingClose = options.driver.disposeSession(rootPiId);
+        }
+      }
       let initializingSessionId: string | undefined;
       try {
+        await Promise.all([previous, pendingClose]);
         if (["create_session", "resume_session", "fork_session"].includes(request.method)) {
           initializingSessionId = requiredString(paramsRecord(request.params).sessionId, "sessionId");
           initializationEvents.set(initializingSessionId, []);
@@ -208,6 +240,8 @@ export function createRuntimeGatewayService(
         let result = await dispatchRuntimeGatewayRequest({
           request,
           driver: options.driver,
+          subagents: options.subagents,
+          flushProjections: () => projectionWrites.flush(),
           journal: options.journal,
           projections: options.projections,
           dataDir,
@@ -261,6 +295,8 @@ export function createRuntimeGatewayService(
         };
       } finally {
         if (initializingSessionId) initializationEvents.delete(initializingSessionId);
+        release?.();
+        if (key && requests.get(key) === current) requests.delete(key);
       }
     },
 
@@ -277,6 +313,7 @@ export function createRuntimeGatewayService(
 async function dispatchRuntimeGatewayRequest(input: {
   request: RuntimeGatewayRequest;
   driver: PiRuntimeDriver;
+  subagents?: SubagentObserver;
   journal?: SessionEventJournal;
   projections?: SessionProjectionStore;
   dataDir: string;
@@ -287,6 +324,7 @@ async function dispatchRuntimeGatewayRequest(input: {
   advanceEventSequence: (events: RuntimeGatewayEventEnvelope[]) => void;
   rememberSession: (snapshot: RuntimeGatewaySnapshot) => void;
   resolveSessionId: (piSessionId: string) => string | null;
+  flushProjections: () => Promise<void>;
 }) {
   const params = paramsRecord(input.request.params);
 
@@ -508,12 +546,28 @@ async function dispatchRuntimeGatewayRequest(input: {
 
       return controls;
     }
-    case "archive_session":
+    case "get_subagents":
+      return input.subagents?.list(requiredString(params.piSessionId, "piSessionId")) ?? { available: false, records: [] };
+    case "get_subagent_snapshot":
+    case "stop_subagent":
+    case "steer_subagent": {
+      if (!input.subagents) throw new Error("Subagent observation is unavailable.");
+      const root = requiredString(params.piSessionId, "piSessionId");
+      const agent = requiredString(params.agentId, "agentId");
+      if (input.request.method === "get_subagent_snapshot") return input.subagents.getAgent(root, agent);
+      if (input.request.method === "stop_subagent") await input.subagents.stop(root, agent);
+      else await input.subagents.steer(root, agent, requiredString(params.message, "message"));
+      return { ok: true };
+    }
+    case "archive_session": {
+      const { projection } = await requireProjection({ store: input.projections, sessionId: requiredString(params.sessionId, "sessionId") });
+      if (input.subagents?.hasActive(projection.piSessionId)) throw new Error("Cannot archive a Session with active subagents.");
       return archiveSessionProjection({
         store: input.projections,
         sessionId: requiredString(params.sessionId, "sessionId"),
         archivedAt: input.now(),
       });
+    }
     case "rename_session":
       return renameSessionProjection({
         store: input.projections,
@@ -522,6 +576,10 @@ async function dispatchRuntimeGatewayRequest(input: {
       });
     case "delete_session":
       return deleteSessionProjection({
+        dispose: input.driver.disposeSession ? async piSessionId => {
+          await input.driver.disposeSession!(piSessionId);
+          await input.flushProjections();
+        } : undefined,
         store: input.projections,
         sessionId: requiredString(params.sessionId, "sessionId"),
       });
@@ -762,12 +820,14 @@ async function renameSessionProjection(input: {
 }
 
 async function deleteSessionProjection(input: {
+  dispose?: (piSessionId: string) => Promise<void>;
   store?: SessionProjectionStore;
   sessionId: string;
 }) {
   const { store, projection } = await requireProjection(input);
 
-  if (projection.status === "running") {
+  if (input.dispose) await input.dispose(projection.piSessionId);
+  else if (projection.status === "running") {
     throw new Error("Cannot delete an active Session.");
   }
 

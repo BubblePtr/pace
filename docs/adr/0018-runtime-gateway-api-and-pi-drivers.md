@@ -85,3 +85,9 @@ PiGUI 的安全边界分层处理：
 ## Supersedes
 
 本文取代 `docs/research/pi-integration-options.md` 里“Pi Runtime Bridge 首先用 RPC 子进程实现，SDK 第二阶段验证”的推荐结论。该调研仍保留为历史背景，尤其是 ACP 取舍、并发 worktree、monorepo cwd 和 Execution Checkout 规则仍然有效。
+
+## 2026-09-13：进程内子会话观测
+
+桌面以 SDK driver 为主路径。Tintinweb 插件通过版本化的 `subagents:host:ready` 接口向后端注册所属根会话的 provider；Pace 订阅插件已经创建的子会话，使用同一套 Normalizer、Gateway sequencer 与 Journal 记录轨迹，不重复创建或绑定子会话。
+
+`get_subagents` / `get_subagent_snapshot` 提供状态和回放，`stop_subagent` / `steer_subagent` 按根会话限定控制范围。子会话有独立事件身份，不写入根会话消息模型或新增侧栏投影；根流中的 `subagent_record` 仅携带所属关系和状态。正常退出发出一次 SDK `session_shutdown` 并等待清理；异常重启把未完成观测记录标为 interrupted。详细契约见 [子代理观测](../subagent-observation.md)。

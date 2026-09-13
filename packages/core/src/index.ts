@@ -130,3 +130,6 @@ export {
   type BrowserAnnotationPayload,
   type BrowserAnnotationViewport,
 } from "./browser-annotation";
+
+export { isSubagentActive, type SubagentStatus, type SubagentUsage, type SubagentRecord,
+  type SubagentsSnapshot, type SubagentSnapshot } from "./subagents";

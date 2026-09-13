@@ -6,6 +6,78 @@ import {
 } from "./pi-sdk-runtime-adapter";
 
 describe("Pi SDK public runtime adapter", () => {
+  it("rejects new prompts while closing and permits retry after cancellation failed", async () => {
+    let fail!: (error: Error) => void;
+    const cancellation = new Promise<void>((_, reject) => { fail = reject; });
+    const stopChildren = vi.fn().mockImplementationOnce(() => cancellation).mockResolvedValue(undefined);
+    const session = { sessionId: "root", isStreaming: false, messages: [], prompt: vi.fn(async () => {}),
+      abort: async () => {}, dispose: vi.fn(), subscribe: () => () => {}, extensionRunner: { emit: vi.fn(async () => {}) } };
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) }, stopChildren })({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    const closing = runtime.dispose!();
+    const rejected = expect(closing).rejects.toThrow("still running");
+    fail(new Error("still running"));
+    await rejected;
+    expect(session.dispose).not.toHaveBeenCalled();
+    const retry = runtime.dispose!();
+    await expect(runtime.sendPrompt("late work")).rejects.toThrow("closing");
+    await retry;
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+    expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
+    expect(stopChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts only this session's assistant usage across compaction, excluding reported child costs", async () => {
+    const session = { sessionId: "root", isStreaming: false, messages: [],
+      prompt: async () => {}, abort: async () => {}, dispose() {}, subscribe: () => () => {},
+      getSessionStats: () => ({ tokens: { total: 999 }, cost: 9 }),
+      sessionManager: { getEntries: () => [
+        { type: "message", message: { role: "assistant", usage: { totalTokens: 20, cost: { total: 0.2 } } } },
+        { type: "message", message: { role: "toolResult", usage: { totalTokens: 900, cost: { total: 8 } } } },
+        { type: "compaction" },
+        { type: "message", message: { role: "assistant", usage: { totalTokens: 30, cost: { total: 0.3 } } } },
+      ] } };
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) } })({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    expect((await runtime.getSnapshot?.())?.summary).toMatchObject({ totalTokens: 50, totalCostUsd: 0.5 });
+    await runtime.dispose?.();
+  });
+
+  it("waits for child cancellation before reporting a parent stop complete", async () => {
+    let release!: () => void;
+    const children = new Promise<void>(resolve => { release = resolve; });
+    const session = { sessionId: "parent", isStreaming: false, messages: [],
+      prompt: vi.fn(async () => {}), abort: vi.fn(async () => {}), dispose: vi.fn(), subscribe: () => () => {} };
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) },
+      stopChildren: () => children })({ sessionId: "app", projectId: "/repo", cwd: "/repo" });
+    let stopped = false;
+    const stopping = runtime.stopRun!().then(() => { stopped = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    release();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it("delivers shutdown once and waits for extensions before disposing the SDK session", async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const shutdown = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const session = { sessionId: "parent", isStreaming: false, messages: [],
+      prompt: async () => {}, abort: async () => {}, subscribe: () => () => {},
+      extensionRunner: { async emit() { order.push("shutdown"); entered(); await shutdown; } },
+      dispose() { order.push("dispose"); } };
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) } })({ sessionId: "app", projectId: "/repo", cwd: "/repo" });
+    const closing = runtime.dispose!();
+    await started;
+    expect(order).toEqual(["shutdown"]);
+    const again = runtime.dispose!();
+    release();
+    await Promise.all([closing, again]);
+    expect(order).toEqual(["shutdown", "dispose"]);
+  });
+
   it("forwards plugin naming events and exposes the persisted Pi name", async () => {
     let emit: (event: unknown) => void = () => {};
     const session = {
