@@ -15,6 +15,30 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.8",
+    date: "2026-09-13",
+    title: "Quieter fixes",
+    summary: "Utility icons stay still, failed tools keep to one line, and ordinary inputs get their own borders back.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.8",
+    changes: [
+      {
+        kind: "fixed",
+        title: "Static utility icons",
+        description: "The Add Project button and the project and session overflow menus show still icons again instead of animating on hover.",
+      },
+      {
+        kind: "fixed",
+        title: "One-line failed tools",
+        description: "A failed tool call no longer wraps its status and duration onto a second line in the trajectory.",
+      },
+      {
+        kind: "fixed",
+        title: "Input elevation restored",
+        description: "Ordinary text inputs return to their default border and focus styles, while the chat composer keeps a subtle outer shadow of its own.",
+      },
+    ],
+  },
+  {
     version: "0.0.7",
     date: "2026-09-12",
     title: "A steadier workspace",
