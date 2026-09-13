@@ -78,4 +78,3 @@ export {
 } from "./workspace/session-files";
 
 export { migrateDataDir } from "./persistence/session-event-journal";
-export { prepareSystemNode } from "./drivers/system-node";

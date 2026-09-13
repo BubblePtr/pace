@@ -8,7 +8,7 @@
 - 所有 `package:*`、`dist:*` 发布入口先执行 `build:release`：冻结安装、类型检查与构建、独立产物冒烟。
 - 构建读取实际安装的 Pi 包版本和 App 包版本，预检显示这两个版本及 `SDK` 模式。
 - Pi 扩展使用引擎自带的虚拟 peer 模块；新增构建外部依赖时需要再次检查独立产物。
-- 独立 Node runner 使用同一 bundle 的真实 SDK/peer 导出；安装包中的入口和共享 chunks 必须位于 asar 外。系统 Node 是扩展后台能力的可选前提，发现与配置见 [系统 Node 扩展运行](system-node-extensions.md)。
+- 后端保持普通入口，SDK/peer 以内联虚拟模块供进程内扩展使用。主题、Photon WASM 与 node-pty 资源随安装包分发；不要求系统 Node。兼容范围调整见[扩展运行与打包边界](extension-runtime.md)。
 
 ## 自动化入口
 
@@ -26,8 +26,9 @@ bun run test:e2e:packaged:mac e2e/smoke/m5-2-preflight.spec.ts
 - 原生 TypeScript 扩展可导入 `typebox` 并注册工具、命令。
 - `session_start` 和原生命令处理器实际执行。
 - 故意损坏的扩展产生加载诊断，首次创建响应及后续历史读取都能看到错误。
-- 仓库外的独立 Node 能通过公开 SDK/peer 入口创建真实 Pi 会话，并保持 SDK 与 peer 类型身份一致。
-- 缺少扩展 Node 时有明确的可选诊断，内置 Pi 的必需检查仍通过。
+- 原生命令可加载内置深浅主题，并通过 Photon WASM 缩小图片。
+
+`e2e/smoke/extension-runner.spec.ts` 在真实打包版中以原版 Tintinweb 验证前台和后台 SDK 子会话、本地 API Key／Codex OAuth、父会话继续、子代理 read／完成通知和插件取消；通过 `PACE_TEST_TINTIN_SUBAGENTS_DIR` 指向源码与依赖。
 
 单元与集成测试另外覆盖创建／恢复／分叉的扩展绑定、初始化失败清理、分叉历史与启动事件的顺序、非致命错误在后端投影和前端状态中的处理，以及原生包清单、禁用规则、包内技能和只读查询。
 

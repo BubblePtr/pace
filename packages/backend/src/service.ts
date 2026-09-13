@@ -1,3 +1,4 @@
+import { createSubagentObserver } from "./drivers/subagent-observer";
 import { createGitMetadataWatchers } from "./workspace/git-metadata-watcher";
 import { CHAT_PROJECT_ID } from "@pace/core";
 import { createWorkspaceInvalidation } from "./workspace/workspace-invalidation";
@@ -105,6 +106,7 @@ export type BackendRpcEvent = {
 export type BackendService = {
   handleRequest(request: BackendRpcRequest): Promise<BackendRpcResponse>;
   onEvent(listener: (event: BackendRpcEvent) => void): () => void;
+  dispose(): Promise<void>;
 };
 
 export type BackendServiceOptions = {
@@ -218,14 +220,33 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     createFileSessionEventJournal({
       dataDir,
     });
+  const subagents = createSubagentObserver({
+    journal: runtimeJournal,
+    publish: event => runtimeGateway.publish(event),
+    advanceSequence: events => runtimeGateway.advanceSequence(events),
+  });
+  const sdkOptions = {
+    sdk: piSdk,
+    async sessionOptionsFor(input: { sessionId: string; cwd: string }) {
+      const settingsManager = piSdk.SettingsManager.create(input.cwd, agentDir);
+      const resourceLoader = new piSdk.DefaultResourceLoader({
+        cwd: input.cwd, agentDir, settingsManager,
+        extensionFactories: [subagents.extension(input.sessionId)],
+      });
+      await resourceLoader.reload();
+      return { agentDir, settingsManager, resourceLoader };
+    },
+    prepareObservation: subagents.prepare,
+    stopChildren: subagents.stop,
+  };
+  const runtimeDriver = options.runtimeDriver ?? createPiSdkDriver({
+    runtimeFactory: createPublicPiSdkRuntimeFactory(sdkOptions),
+    runtimeForker: createPublicPiSdkRuntimeForker(sdkOptions),
+    runtimeResumer: createPublicPiSdkRuntimeResumer(sdkOptions),
+  });
   const runtimeGateway = createRuntimeGatewayService({
-    driver:
-      options.runtimeDriver ??
-      createPiSdkDriver({
-        runtimeFactory: createPublicPiSdkRuntimeFactory({ sdk: piSdk }),
-        runtimeForker: createPublicPiSdkRuntimeForker({ sdk: piSdk }),
-        runtimeResumer: createPublicPiSdkRuntimeResumer({ sdk: piSdk }),
-      }),
+    driver: runtimeDriver,
+    subagents,
     projections: sessionProjectionStore,
     journal: runtimeJournal,
     dataDir,
@@ -233,7 +254,8 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   const terminalManager = options.terminalManager ?? createTerminalManager();
 
   runtimeGateway.onEvent((event) => {
-    const { payload, sessionId } = event.event;
+    const { payload } = event.event;
+    const sessionId = typeof payload.rootSessionId === "string" ? payload.rootSessionId : event.event.sessionId;
     if (payload.phase === "end") {
       if (payload.type === "tool") invalidation.invalidate(sessionId);
       if (payload.type === "turn" || payload.type === "run") invalidation.flush(sessionId);
@@ -265,9 +287,26 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     }
   });
 
+  let disposal: Promise<void> | undefined;
+  let closing = false;
   return {
+    dispose() {
+      closing = true;
+      disposal ??= (async () => {
+        await runtimeDriver.dispose?.();
+        await subagents.dispose();
+        await runtimeGateway.flush();
+        await runtimeJournal.flush?.();
+        terminalManager.disposeAll();
+        gitWatchers.dispose();
+        invalidation.dispose();
+        listeners.clear();
+      })().catch(error => { disposal = undefined; throw error; });
+      return disposal;
+    },
     async handleRequest(request) {
       try {
+        if (closing) throw new Error("Pace backend is closing.");
         await associationsReady;
         return {
           id: request.id,
@@ -738,6 +777,10 @@ function isRuntimeGatewayMethod(method: string) {
     method === "archive_session" ||
     method === "rename_session" ||
     method === "delete_session" ||
+    method === "get_subagents" ||
+    method === "get_subagent_snapshot" ||
+    method === "stop_subagent" ||
+    method === "steer_subagent" ||
     method === "get_runtime_snapshot"
   );
 }

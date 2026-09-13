@@ -227,7 +227,22 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
   const promptCounts = new Map<string, number>();
   const listeners = new Set<(event: RuntimeGatewayDriverEvent) => void>();
 
+  let closing = false;
+  let disposal: Promise<void> | undefined;
+  const creations = new Set<Promise<unknown>>();
+  async function trackCreation<T>(create: () => Promise<T>): Promise<T> {
+    if (closing) throw new Error("Pi runtime driver is closing.");
+    const operation = create();
+    creations.add(operation);
+    try { return await operation; } finally { creations.delete(operation); }
+  }
+  async function acceptRuntime(runtime: PiSdkSessionRuntime) {
+    if (!closing) return;
+    await runtime.dispose?.();
+    throw new Error("Pi runtime driver is closing.");
+  }
   const runtimeFor = (piSessionId: string, capability: string) => {
+    if (closing) throw new Error("Pi runtime driver is closing.");
     const runtime = runtimes.get(piSessionId);
 
     if (!runtime) {
@@ -240,6 +255,14 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
     for (const listener of listeners) {
       listener(event);
     }
+  };
+  const disposeSession = async (piSessionId: string) => {
+    const runtime = runtimes.get(piSessionId);
+    if (!runtime) return;
+    await runtime.dispose?.();
+    runtimes.delete(piSessionId);
+    snapshots.delete(piSessionId);
+    promptCounts.delete(piSessionId);
   };
   const rememberRuntime = (
     input: CreateRuntimeSessionInput | ResumeRuntimeSessionInput,
@@ -271,39 +294,56 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
 
   return {
     async createSession(input) {
-      if (!options.runtimeFactory) {
-        unsupported("create_session", "no SDK runtime factory is configured");
-      }
+      return trackCreation(async () => {
+        if (!options.runtimeFactory) {
+          unsupported("create_session", "no SDK runtime factory is configured");
+        }
 
-      const runtime = await options.runtimeFactory(input);
-      const snapshot = rememberRuntime(input, runtime);
+        const runtime = await options.runtimeFactory(input);
+        await acceptRuntime(runtime);
+        const snapshot = rememberRuntime(input, runtime);
 
-      return cloneSnapshot(snapshot);
+        return cloneSnapshot(snapshot);
+      });
     },
 
     async resumeSession(input) {
-      if (!options.runtimeResumer) {
-        unsupported("resume_session", "no SDK runtime resumer is configured");
-      }
+      return trackCreation(async () => {
+        const existing = runtimes.get(input.piSessionId);
+        const previous = snapshots.get(input.piSessionId);
+        if (existing && previous) {
+          if (previous.sessionId !== input.sessionId) throw new Error("A live Pi session belongs to a different Pace session.");
+          const snapshot = mergeSnapshotPatch(previous, await existing.getSnapshot?.() ?? {});
+          snapshots.set(input.piSessionId, snapshot);
+          return cloneSnapshot(snapshot);
+        }
+        if (!options.runtimeResumer) {
+          unsupported("resume_session", "no SDK runtime resumer is configured");
+        }
 
-      const runtime = await options.runtimeResumer(input);
-      const snapshot = rememberRuntime(input, runtime);
+        const runtime = await options.runtimeResumer(input);
+        await acceptRuntime(runtime);
+        const snapshot = rememberRuntime(input, runtime);
 
-      return cloneSnapshot(snapshot);
+        return cloneSnapshot(snapshot);
+      });
     },
 
     async forkSession(input) {
-      if (!options.runtimeForker) {
-        unsupported("fork_session", "no SDK runtime forker is configured");
-      }
+      return trackCreation(async () => {
+        if (!options.runtimeForker) {
+          unsupported("fork_session", "no SDK runtime forker is configured");
+        }
 
-      const result = await options.runtimeForker(input);
-      const snapshot = rememberRuntime(input, result.runtime);
+        const result = await options.runtimeForker(input);
+        await acceptRuntime(result.runtime);
+        const snapshot = rememberRuntime(input, result.runtime);
 
-      return {
-        snapshot: cloneSnapshot(snapshot),
-        ...(result.selectedText ? { selectedText: result.selectedText } : {}),
-      };
+        return {
+          snapshot: cloneSnapshot(snapshot),
+          ...(result.selectedText ? { selectedText: result.selectedText } : {}),
+        };
+      });
     },
 
     async sendPrompt(input) {
@@ -477,6 +517,16 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       }
 
       return runtime.resolveToolSchemas(input.names);
+    },
+
+    disposeSession,
+    dispose() {
+      closing = true;
+      disposal ??= (async () => {
+        await Promise.allSettled([...creations]);
+        await Promise.all([...runtimes.keys()].map(disposeSession));
+      })().catch(error => { disposal = undefined; throw error; });
+      return disposal;
     },
 
     async getSnapshot(piSessionId) {

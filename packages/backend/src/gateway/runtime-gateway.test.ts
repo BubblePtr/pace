@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate as afterMicrotasks } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRuntimeGatewayService,
@@ -183,6 +184,12 @@ function createFakeRuntimeDriver(): PiRuntimeDriver & {
       };
     },
   };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
 }
 
 it("journals recoverable extension errors without failing the active session", async () => {
@@ -982,6 +989,192 @@ describe("Runtime Gateway service", () => {
       id: "req-rename-missing",
       error: 'Session "app-session-unknown" was not found.',
     });
+  });
+
+  it("drains a live runtime before deleting its projection", async () => {
+    const projections = createInMemorySessionProjectionStore();
+    let release!: () => void;
+    const drain = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const driver = { ...createFakeRuntimeDriver(), async disposeSession(id: string) {
+      expect(id).toBe("pi-session-1"); entered(); await drain;
+    } };
+    const service = createRuntimeGatewayService({ driver, projections });
+    await service.handleRequest({ id: "create", method: "create_session", params: { sessionId: "app", projectId: "p", cwd: "/repo" } });
+    const deleting = service.handleRequest({ id: "delete", method: "delete_session", params: { sessionId: "app" } });
+    // The implementation must enter disposal before removing the projection.
+    await Promise.race([started, deleting]);
+    expect(await projections.get("app")).not.toBeNull();
+    release();
+    expect(await deleting).not.toHaveProperty("error");
+    expect(await projections.get("app")).toBeNull();
+  });
+
+  it("finishes a queued runtime projection write before removing the Session", async () => {
+    const persisted = createInMemorySessionProjectionStore();
+    const saving = deferred();
+    const finishSave = deferred();
+    const operations: string[] = [];
+    let holdSave = false;
+    const projections = {
+      ...persisted,
+      async save(projection: Parameters<typeof persisted.save>[0]) {
+        if (holdSave) {
+          operations.push("save-start");
+          saving.resolve();
+          await finishSave.promise;
+          operations.push("save-end");
+        }
+        await persisted.save(projection);
+      },
+      async remove(sessionId: string) {
+        operations.push("remove");
+        await persisted.remove(sessionId);
+      },
+    };
+    const base = createFakeRuntimeDriver();
+    const driver = { ...base, async disposeSession(piSessionId: string) {
+      base.emitDriverEvent({ piSessionId, type: "run", payload: { type: "run", phase: "end", outcome: "aborted" } });
+      await saving.promise;
+    } };
+    const service = createRuntimeGatewayService({ driver, projections });
+    await service.handleRequest({ id: "create", method: "create_session", params: { sessionId: "app", projectId: "p", cwd: "/repo" } });
+    holdSave = true;
+    const deleting = service.handleRequest({ id: "delete", method: "delete_session", params: { sessionId: "app" } });
+    await saving.promise;
+    // Drain already scheduled continuations while the write remains gated.
+    await afterMicrotasks();
+    finishSave.resolve();
+    expect(await deleting).not.toHaveProperty("error");
+    expect(operations).toEqual(["save-start", "save-end", "remove"]);
+    expect(await persisted.get("app")).toBeNull();
+  });
+
+  it("serializes a snapshot read with deletion so the late snapshot cannot recreate the Session", async () => {
+    const persisted = createInMemorySessionProjectionStore();
+    const operations: string[] = [];
+    const projections = {
+      ...persisted,
+      async save(projection: Parameters<typeof persisted.save>[0]) {
+        await persisted.save(projection);
+        operations.push("save");
+      },
+      async remove(sessionId: string) {
+        operations.push("remove");
+        await persisted.remove(sessionId);
+      },
+    };
+    const reading = deferred();
+    const finishRead = deferred();
+    const base = createFakeRuntimeDriver();
+    const disposeSession = vi.fn(async () => {});
+    const driver = { ...base, disposeSession, async getSnapshot(piSessionId: string) {
+      reading.resolve();
+      await finishRead.promise;
+      return base.getSnapshot(piSessionId);
+    } };
+    const service = createRuntimeGatewayService({ driver, projections });
+    await service.handleRequest({ id: "create", method: "create_session", params: { sessionId: "app-session-1", projectId: "p", cwd: "/repo" } });
+    operations.length = 0;
+    const snapshot = service.handleRequest({ id: "snapshot", method: "get_runtime_snapshot", params: { piSessionId: "pi-session-1" } });
+    await reading.promise;
+    const deleting = service.handleRequest({ id: "delete", method: "delete_session", params: { sessionId: "app-session-1" } });
+    await afterMicrotasks();
+    const removedDuringRead = operations.includes("remove");
+    finishRead.resolve();
+    const responses = await Promise.all([snapshot, deleting]);
+    expect(responses.every(response => !response.error)).toBe(true);
+    expect(removedDuringRead).toBe(false);
+    expect(operations).toEqual(["save", "remove"]);
+    expect(await projections.get("app-session-1")).toBeNull();
+  });
+
+  it("stops a root while its prompt is waiting for an asynchronous input hook", async () => {
+    const enteredInput = deferred();
+    const finishInput = deferred();
+    const base = createFakeRuntimeDriver();
+    const stopRun = vi.fn(async (input: Parameters<typeof base.stopRun>[0]) => {
+      finishInput.resolve();
+      return base.stopRun(input);
+    });
+    const driver = { ...base, stopRun, async sendPrompt(input: Parameters<typeof base.sendPrompt>[0]) {
+      enteredInput.resolve();
+      await finishInput.promise;
+      return base.sendPrompt(input);
+    } };
+    const service = createRuntimeGatewayService({ driver, projections: createInMemorySessionProjectionStore() });
+    await service.handleRequest({ id: "create", method: "create_session", params: { sessionId: "app", projectId: "p", cwd: "/repo" } });
+    const prompting = service.handleRequest({ id: "prompt", method: "send_prompt", params: { piSessionId: "pi-session-1", prompt: "@planner inspect this task" } });
+    await enteredInput.promise;
+    const stopping = service.handleRequest({ id: "stop", method: "stop_run", params: { piSessionId: "pi-session-1" } });
+    await afterMicrotasks();
+    const stoppedBeforeInputFinished = stopRun.mock.calls.length > 0;
+    // Release the input even on the broken path so the assertion reports a deadlock without hanging.
+    finishInput.resolve();
+    const responses = await Promise.all([prompting, stopping]);
+    expect(responses.every(response => !response.error)).toBe(true);
+    expect(stoppedBeforeInputFinished).toBe(true);
+    expect(stopRun).toHaveBeenCalledWith({ piSessionId: "pi-session-1" });
+  });
+
+  it("cancels a pending input hook before draining its writes and deleting the root", async () => {
+    const projections = createInMemorySessionProjectionStore();
+    const enteredInput = deferred();
+    const finishInput = deferred();
+    const base = createFakeRuntimeDriver();
+    const disposeSession = vi.fn(async () => { finishInput.resolve(); });
+    const driver = { ...base, disposeSession, async sendPrompt(input: Parameters<typeof base.sendPrompt>[0]) {
+      enteredInput.resolve();
+      await finishInput.promise;
+      return base.sendPrompt(input);
+    } };
+    const service = createRuntimeGatewayService({ driver, projections });
+    await service.handleRequest({ id: "create", method: "create_session", params: { sessionId: "app", projectId: "p", cwd: "/repo" } });
+    const prompting = service.handleRequest({ id: "prompt", method: "send_prompt", params: { piSessionId: "pi-session-1", prompt: "@planner inspect this task" } });
+    await enteredInput.promise;
+    const deleting = service.handleRequest({ id: "delete", method: "delete_session", params: { sessionId: "app" } });
+    await afterMicrotasks();
+    const disposedBeforeInputFinished = disposeSession.mock.calls.length > 0;
+    finishInput.resolve();
+    const responses = await Promise.all([prompting, deleting]);
+    expect(responses.every(response => !response.error)).toBe(true);
+    expect(disposedBeforeInputFinished).toBe(true);
+    expect(disposeSession).toHaveBeenCalledWith("pi-session-1");
+    await service.flush();
+    expect(await projections.get("app")).toBeNull();
+  });
+
+  it("allows an independent Session request to finish while another root snapshot is pending", async () => {
+    const projections = createInMemorySessionProjectionStore();
+    const reading = deferred();
+    const finishRead = deferred();
+    const base = createFakeRuntimeDriver();
+    const driver = {
+      ...base,
+      async createSession(input: Parameters<typeof base.createSession>[0]) {
+        return { ...await base.createSession(input), piSessionId: `pi-${input.sessionId}` };
+      },
+      async getSnapshot(piSessionId: string) {
+        if (piSessionId === "pi-a") {
+          reading.resolve();
+          await finishRead.promise;
+        }
+        return { ...await base.getSnapshot(piSessionId), sessionId: piSessionId.slice(3) };
+      },
+    };
+    const service = createRuntimeGatewayService({ driver, projections });
+    for (const sessionId of ["a", "b"]) await service.handleRequest({ id: `create-${sessionId}`, method: "create_session", params: { sessionId, projectId: "p", cwd: "/repo" } });
+    const a = service.handleRequest({ id: "snapshot-a", method: "get_runtime_snapshot", params: { piSessionId: "pi-a" } });
+    await reading.promise;
+    let otherFinished = false;
+    const b = service.handleRequest({ id: "snapshot-b", method: "get_runtime_snapshot", params: { piSessionId: "pi-b" } }).then(response => { otherFinished = true; return response; });
+    await afterMicrotasks();
+    const finishedIndependently = otherFinished;
+    finishRead.resolve();
+    const responses = await Promise.all([a, b]);
+    expect(responses.every(response => !response.error)).toBe(true);
+    expect(finishedIndependently).toBe(true);
   });
 
   it("deletes inactive Session Projections and rejects active ones", async () => {

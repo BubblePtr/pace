@@ -9,7 +9,6 @@ import type {
   EnvironmentPreflightStatus,
 } from "@pace/core";
 import { inspectPiRuntime, type PiRuntimeInfo } from "../drivers/pi-runtime-info";
-import { prepareSystemNode } from "../drivers/system-node";
 
 const execFileAsync = promisify(execFile);
 
@@ -334,21 +333,6 @@ export function summarizeChecks(checks: EnvironmentPreflightCheck[], checkedAt: 
   } satisfies EnvironmentPreflightReport;
 }
 
-async function checkExtensionNode(options: EnvironmentPreflightReaderOptions): Promise<EnvironmentPreflightCheck> {
-  const node = await prepareSystemNode(options.env ?? process.env);
-  return node.status === "available" ? {
-    id: "extension_node", severity: "optional", status: "pass", title: "Extension Node.js",
-    summary: "Node.js available for background extensions",
-    detail: `Node ${node.version} · ${node.executable}`,
-  } : {
-    id: "extension_node", severity: "optional", status: "fail", title: "Extension Node.js",
-    summary: "Background extensions need a compatible Node.js installation",
-    detail: node.detail,
-    remediation: ["Install Node.js 22.19.0 or newer, or set PACE_NODE_PATH to an existing Node executable", "Restart Pace or click Recheck; ordinary Pi sessions remain available"],
-    docsUrl: "https://nodejs.org/en/download",
-  };
-}
-
 export function createEnvironmentPreflightReader(
   options: EnvironmentPreflightReaderOptions,
 ): EnvironmentPreflightReader {
@@ -361,7 +345,6 @@ export function createEnvironmentPreflightReader(
         checkPiRuntime(options),
         checkDataDirectory(options),
         checkModelAuth(options),
-        checkExtensionNode(options),
         checkGit(options),
       ]);
       const report = summarizeChecks(checks, checkedAt);

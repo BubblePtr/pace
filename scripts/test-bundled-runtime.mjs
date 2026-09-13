@@ -10,47 +10,6 @@ import test from "node:test";
 const run = promisify(execFile);
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-test("an independent Node process can use the shipped SDK and its peer exports", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pace-extension-sdk-"));
-  try {
-    await cp(join(repo, "apps/desktop/out/main/runtime"), root, { recursive: true });
-    await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
-    await writeFile(join(root, "probe.mjs"), `
-      import assert from 'node:assert/strict';
-      import * as sdk from '@earendil-works/pi-coding-agent';
-      import { Agent } from '@earendil-works/pi-agent-core';
-      import * as nodeCore from '@earendil-works/pi-agent-core/node';
-      import * as ai from '@earendil-works/pi-ai/compat';
-      import * as oauth from '@earendil-works/pi-ai/oauth';
-      import * as providers from '@earendil-works/pi-ai/providers/all';
-      import * as tui from '@earendil-works/pi-tui';
-      import { Type } from 'typebox';
-      import { Compile } from 'typebox/compile';
-      import { Value } from 'typebox/value';
-      const schema = Type.Object({ task: Type.String() });
-      assert.equal(Compile(schema).Check({ task: 'probe' }), true);
-      assert.equal(Value.Check(schema, { task: 42 }), false);
-      const loader = new sdk.DefaultResourceLoader({ cwd: process.cwd(), agentDir: process.env.PI_CODING_AGENT_DIR,
-        noExtensions: true, noSkills: true, noPromptTemplates: true, noContextFiles: true });
-      await loader.reload();
-      const { session } = await sdk.createAgentSession({ cwd: process.cwd(), resourceLoader: loader });
-      assert.ok(session.agent instanceof Agent, 'the public SDK must share peer identity');
-      assert.ok(session.agent.state.tools.some(tool => tool.name === 'read'));
-      await session.dispose();
-      console.log('SDK_CHILD_OK');
-    `);
-    const { stdout } = await run(process.execPath, [join(root, "probe.mjs")], {
-      cwd: root,
-      env: { HOME: root, PATH: "", PI_CODING_AGENT_DIR: join(root, "agent"),
-        PI_PACKAGE_DIR: join(root, "node_modules/@earendil-works/pi-coding-agent") },
-      timeout: 30_000,
-    });
-    assert.match(stdout, /SDK_CHILD_OK/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("the release declares an exact Pi engine combination", async () => {
   const { dependencies } = JSON.parse(await readFile(join(repo, "packages/backend/package.json"), "utf8"));
   for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]) {
@@ -74,7 +33,9 @@ test("the shipped backend works without global pi or repository node_modules", a
       openai: { type: "api_key", key: "bundled-runtime-test-placeholder" },
     }));
     await writeFile(join(agentDir, "extensions/working.ts"), `
+      import assert from "node:assert/strict";
       import { Type } from "typebox";
+      import { initTheme, getMarkdownTheme, resizeImage } from "@earendil-works/pi-coding-agent";
       import { writeFileSync } from "node:fs";
       import { join } from "node:path";
       export default function(pi) {
@@ -82,12 +43,18 @@ test("the shipped backend works without global pi or repository node_modules", a
           parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
         pi.on("session_start", async (_event, ctx) => { writeFileSync(join(ctx.cwd, "started.txt"), "ready"); });
         pi.registerCommand("bundle-probe", { description: "Probe command", handler: async (_args, ctx) => {
-          writeFileSync(join(ctx.cwd, "command.txt"), "ready");
+          for (const name of ["dark", "light"]) {
+            initTheme(name);
+            assert.match(getMarkdownTheme().heading("theme-probe"), /theme-probe/);
+          }
+          const image = await resizeImage(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8DwH4QZYAwAR8oH+WdZbrcAAAAASUVORK5CYII=", "base64"), "image/png", { maxWidth: 1, maxHeight: 1 });
+          assert.equal(image?.width, 1, "the Photon WASM module must load");
+          writeFileSync(join(ctx.cwd, "command.txt"), "themes-and-image-ready");
         } });
       }
     `);
     await writeFile(join(agentDir, "extensions/broken.ts"), `export default function() { throw new Error("EXTENSION_LOAD_PROBE"); }`);
-    const { stdout } = await run(process.execPath, ["--input-type=module", "-e", `
+    const { stdout, stderr } = await run(process.execPath, ["--input-type=module", "-e", `
       import { pathToFileURL } from "node:url";
       const pending = new Map();
       const events = [];
@@ -96,7 +63,7 @@ test("the shipped backend works without global pi or repository node_modules", a
       const ready = new Promise(resolve => { connected = resolve; });
       process.parentPort = { on(_name, connect) {
         connect({ data: { type: "connect" }, ports: [{
-          on(_event, handler) { receive = handler; connected(); }, start() {},
+          on(event, handler) { if (event === "message") { receive = handler; connected(); } }, start() {},
           postMessage(message) {
             if (message.type === "event") events.push(message.event);
             else { pending.get(message.id)?.(message); pending.delete(message.id); }
@@ -124,20 +91,21 @@ test("the shipped backend works without global pi or repository node_modules", a
         HOME: root,
         PI_CODING_AGENT_DIR: agentDir,
         PACE_DATA_DIR: join(root, "data"),
-        PROBE_BACKEND: join(appDir, "out/main/runtime/node_modules/@earendil-works/pi-coding-agent/pace-backend.js"),
-        PI_PACKAGE_DIR: join(appDir, "out/main/runtime/node_modules/@earendil-works/pi-coding-agent"),
-        PACE_NODE_PATH: join(root, "missing-node"),
+        PROBE_BACKEND: join(appDir, "out/main/backend.js"),
+        PI_PACKAGE_DIR: join(appDir, "out/main/pi-assets"),
         PROBE_CWD: cwd,
       },
       timeout: 30_000,
       maxBuffer: 2 * 1024 * 1024,
     });
     const result = JSON.parse(stdout.split("\n").find(line => line.startsWith("PROBE_RESULT ")).slice(13));
+    if (stderr) console.error(stderr);
     assert.equal(result.created.error, undefined);
     assert.ok(result.created.result.events.some(event => event.payload.code === "extension_load_error"), "startup errors must be in the first snapshot");
     assert.ok(result.tools?.result?.schemas?.bundle_probe, "the extension must resolve bundled peer modules");
     assert.equal(await readFile(join(cwd, "started.txt"), "utf8"), "ready", "session_start must run");
-    assert.equal(await readFile(join(cwd, "command.txt"), "utf8"), "ready", "native commands must run");
+    assert.equal(result.prompted?.error, undefined, JSON.stringify(result.snapshot));
+    assert.equal(await readFile(join(cwd, "command.txt"), "utf8"), "themes-and-image-ready", "native commands, built-in themes, and Photon must run");
     assert.ok(result.snapshot?.result?.events?.some(event => JSON.stringify(event.payload).includes("EXTENSION_LOAD_PROBE")), "load errors must survive gateway replay");
     assert.equal(result.preflight.result?.canContinue, true, "a global CLI must not be required");
     const runtimeCheck = result.preflight.result.checks.find(check => check.id === "pi_runtime");

@@ -16,7 +16,7 @@ import {
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { autoUpdater } from "electron-updater";
 import type { BackendRpcEvent, BackendRpcResponse } from "@pace/backend";
 import { browserEventChannel, type BrowserEvent, type BrowserTabTarget } from "@/shared/browser-protocol";
@@ -83,9 +83,7 @@ function browserAnnotationPreloadPath() {
 }
 
 function backendPath() {
-  const mainDirectory = app.isPackaged
-    ? join(process.resourcesPath, "app.asar.unpacked/out/main") : __dirname;
-  return join(mainDirectory, "runtime/node_modules/@earendil-works/pi-coding-agent/pace-backend.js");
+  return join(__dirname, "backend.js");
 }
 
 /**
@@ -209,7 +207,7 @@ function createBackendBridge() {
   const generation = backendGeneration;
   const backend = utilityProcess.fork(backendPath(), [], {
     env: resolveBackendEnvironment({
-      env: { ...process.env, PI_PACKAGE_DIR: dirname(backendPath()) },
+      env: { ...process.env, PI_PACKAGE_DIR: join(__dirname, "pi-assets") },
       isPackaged: app.isPackaged,
       homeDir: homedir(),
     }),
@@ -784,19 +782,53 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
+let backendShutdownComplete = false;
+app.on("before-quit", (event) => {
   appQuitting = true;
-
   if (backendRestartTimer) {
     clearTimeout(backendRestartTimer);
     backendRestartTimer = null;
   }
-
-  backendPort?.close();
-  backendPort = null;
-  backendProcess?.kill();
-  backendProcess = null;
+  if (backendShutdownComplete || !backendProcess) return;
+  event.preventDefault();
+  if (backendShuttingDown) return;
+  backendShuttingDown = true;
+  void shutdownBackend().finally(() => {
+    backendShutdownComplete = true;
+    backendPort?.close();
+    backendPort = null;
+    backendProcess?.kill();
+    backendProcess = null;
+    app.quit();
+  });
 });
+
+let backendShuttingDown = false;
+function shutdownBackend(): Promise<void> {
+  const backend = backendProcess;
+  if (!backend) return Promise.resolve();
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timer);
+      backend.off("message", onMessage);
+      backend.off("exit", finish);
+      resolve();
+    };
+    const onMessage = (message: { type?: string; error?: string }) => {
+      if (message.type !== "shutdown_complete") return;
+      if (message.error) console.error("Backend shutdown:", message.error);
+      finish();
+    };
+    // A crashed or non-cooperative extension must not prevent app exit.
+    const timer = setTimeout(() => {
+      console.error("Backend shutdown timed out; interrupting remaining work.");
+      finish();
+    }, 30_000);
+    backend.on("message", onMessage);
+    backend.once("exit", finish);
+    backend.postMessage({ type: "shutdown" });
+  });
+}
 
 function isBackendRpcEvent(value: unknown): value is BackendRpcEvent {
   return (

@@ -73,6 +73,7 @@ export type PublicPiSdkAgentSession = {
   steer?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
+  extensionRunner?: { emit(event: { type: "session_shutdown"; reason: "quit" }): Promise<unknown> };
   subscribe(listener: (event: unknown) => void): () => void;
   bindExtensions?(bindings: {
     onError: (error: { extensionPath: string; event: string; error: string }) => void;
@@ -89,6 +90,7 @@ export type PublicPiSdkAgentSession = {
     getSessionFile?(): string | undefined;
     getLeafId?(): string | null;
     getEntry?(entryId: string): unknown;
+    getEntries?(): readonly unknown[];
   };
   getSessionStats?(): {
     tokens?: {
@@ -162,6 +164,9 @@ export type PublicPiSdkRuntimeFactoryOptions = {
   sdk: PublicPiSdkModule;
   now?: () => string;
   sessionOptions?: Omit<PublicPiSdkCreateAgentSessionOptions, "cwd">;
+  sessionOptionsFor?(input: CreateRuntimeSessionInput): Promise<Partial<PublicPiSdkCreateAgentSessionOptions>>;
+  prepareObservation?(piSessionId: string): Promise<void>;
+  stopChildren?(piSessionId: string): Promise<void>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -474,11 +479,25 @@ async function configureSessionModel(
 
 function summaryFromSession(session: PublicPiSdkAgentSession) {
   const stats = session.getSessionStats?.();
+  // Pi aggregates usage reported by tools, including child sessions. Keep
+  // each session's own model and compaction spend so the tree can be summed.
+  const entries = session.sessionManager?.getEntries?.();
+  let ownTokens = 0;
+  let ownCost = 0;
+  for (const entry of entries ?? []) {
+    if (!isRecord(entry)) continue;
+    const message = isRecord(entry.message) ? entry.message : undefined;
+    const usage = entry.type === "message" && message?.role === "assistant" ? message.usage
+      : entry.type === "compaction" || entry.type === "branch_summary" ? entry.usage : undefined;
+    if (!isRecord(usage)) continue;
+    ownTokens += maybeNumber(usage.totalTokens) ?? [usage.input, usage.output, usage.cacheRead, usage.cacheWrite].reduce<number>((sum, n) => sum + (maybeNumber(n) ?? 0), 0);
+    ownCost += isRecord(usage.cost) ? maybeNumber(usage.cost.total) ?? 0 : 0;
+  }
   const summary = {
     provider: modelProvider(session.model),
     model: modelId(session.model),
-    totalTokens: maybeNumber(stats?.tokens?.total) ?? 0,
-    totalCostUsd: maybeNumber(stats?.cost) ?? 0,
+    totalTokens: entries ? ownTokens : maybeNumber(stats?.tokens?.total) ?? 0,
+    totalCostUsd: entries ? ownCost : maybeNumber(stats?.cost) ?? 0,
   };
 
   if (
@@ -576,8 +595,10 @@ export function createPublicPiSdkRuntimeFactory(
     createPublicPiSdkRuntime({
       input,
       now,
+      host: options,
       ...(await options.sdk.createAgentSession({
         ...options.sessionOptions,
+        ...await options.sessionOptionsFor?.(input),
         cwd: input.cwd,
       })),
     });
@@ -597,6 +618,7 @@ export function createPublicPiSdkRuntimeResumer(
 
     const { session, extensionsResult } = await options.sdk.createAgentSession({
       ...options.sessionOptions,
+      ...await options.sessionOptionsFor?.({ ...input, cwd: sessionManager.getCwd?.() || input.cwd }),
       cwd: sessionManager.getCwd?.() || input.cwd,
       sessionManager,
     });
@@ -613,6 +635,7 @@ export function createPublicPiSdkRuntimeResumer(
       now,
       session,
       extensionsResult,
+      host: options,
     });
   };
 }
@@ -658,6 +681,7 @@ export function createPublicPiSdkRuntimeForker(
 
     const { session, extensionsResult } = await options.sdk.createAgentSession({
       ...options.sessionOptions,
+      ...await options.sessionOptionsFor?.({ ...input, cwd: sessionManager.getCwd?.() || input.cwd }),
       cwd: sessionManager.getCwd?.() || input.cwd,
       sessionManager,
     });
@@ -668,6 +692,7 @@ export function createPublicPiSdkRuntimeForker(
         now: options.now ?? (() => new Date().toISOString()),
         session,
         extensionsResult,
+        host: options,
       }),
       selectedText,
     };
@@ -686,6 +711,7 @@ async function createPublicPiSdkRuntime(context: {
   now: () => string;
   session: PublicPiSdkAgentSession;
   extensionsResult?: { errors: Array<{ path: string; error: string }> };
+  host?: PublicPiSdkRuntimeFactoryOptions;
 }): Promise<PiSdkSessionRuntime> {
     const { session } = context;
     const now = context.now;
@@ -709,6 +735,9 @@ async function createPublicPiSdkRuntime(context: {
     const queuedMessages = new Map<string, RuntimeGatewayQueuedMessage>();
     const listeners = new Set<(event: PiSdkRuntimeEvent) => void>();
     const pendingEvents: PiSdkRuntimeEvent[] = [];
+    let disposed = false;
+    let disposal: Promise<void> | undefined;
+    const assertOpen = () => { if (disposed) throw new Error("Session is closing or closed."); };
     const emit = (event: PiSdkRuntimeEvent) => {
       if (listeners.size === 0) {
         // Startup precedes the driver's subscription and the Gateway's Pi-id
@@ -784,6 +813,7 @@ async function createPublicPiSdkRuntime(context: {
         });
       },
       async sendPrompt(prompt, images) {
+        assertOpen();
         normalizer.noteRunTrigger("prompt");
         const piImages = piImagesFromPrompt(images);
 
@@ -796,7 +826,7 @@ async function createPublicPiSdkRuntime(context: {
         promptCompleted = true;
       },
       async stopRun() {
-        await session.abort();
+        await Promise.all([context.host?.stopChildren?.(session.sessionId), session.abort()]);
         stopped = true;
       },
       async getSnapshot() {
@@ -810,6 +840,7 @@ async function createPublicPiSdkRuntime(context: {
         };
       },
       async configureModel(selection) {
+        assertOpen();
         return configureSessionModel(session, selection);
       },
       async resolveToolSchemas(names) {
@@ -825,15 +856,48 @@ async function createPublicPiSdkRuntime(context: {
         };
       },
       dispose() {
-        unsubscribe();
-        listeners.clear();
-        pendingEvents.length = 0;
-        session.dispose();
+        if (disposed) return disposal;
+        disposed = true;
+        let released = false;
+        const release = () => {
+          released = true;
+          unsubscribe();
+          listeners.clear();
+          pendingEvents.length = 0;
+          session.dispose();
+        };
+        if (!session.extensionRunner && !session.isStreaming && !context.host?.stopChildren) {
+          release();
+          return;
+        }
+        disposal = (async () => {
+          await Promise.all([context.host?.stopChildren?.(session.sessionId), session.abort()]);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            if (session.extensionRunner) await Promise.race([
+              session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("Session shutdown did not finish.")), 20_000);
+                timer.unref?.();
+              }),
+            ]);
+          } finally {
+            if (timer) clearTimeout(timer);
+            release();
+          }
+        })().catch(error => {
+          // A timed-out cancellation still owns live work; allow cleanup retry.
+          if (!released) disposed = false;
+          disposal = undefined;
+          throw error;
+        });
+        return disposal;
       },
     };
 
     if (session.followUp) {
       runtime.queueFollowUp = async (message, images) => {
+        assertOpen();
         const queuedMessage = {
           id: `pi-sdk:${session.sessionId}:queued:${queuedSequence}`,
           piSessionId: session.sessionId,
@@ -861,6 +925,7 @@ async function createPublicPiSdkRuntime(context: {
 
     if (session.clearQueue && session.followUp && session.steer) {
       runtime.withdrawQueuedMessage = async (queuedMessageId) => {
+        assertOpen();
         const queuedMessage = queuedMessages.get(queuedMessageId);
 
         if (!queuedMessage) {
@@ -918,6 +983,7 @@ async function createPublicPiSdkRuntime(context: {
 
     if (session.steer) {
       runtime.steerRun = async (message, images) => {
+        assertOpen();
         const piImages = piImagesFromPrompt(images);
 
         if (piImages) {
@@ -943,6 +1009,7 @@ async function createPublicPiSdkRuntime(context: {
         },
       });
     try {
+      await context.host?.prepareObservation?.(session.sessionId);
       for (const error of context.extensionsResult?.errors ?? []) {
         reportExtensionError("extension_load_error", error.path, error.error);
       }
@@ -957,7 +1024,7 @@ async function createPublicPiSdkRuntime(context: {
       runtime.modelControls = modelControlsFromSession(session);
       runtime.summary = summaryFromSession(session);
     } catch (error) {
-      runtime.dispose?.();
+      await runtime.dispose?.();
       throw error;
     }
     return runtime;

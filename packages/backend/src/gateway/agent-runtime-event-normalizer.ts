@@ -20,6 +20,8 @@ import {
 export type AgentRuntimeEventNormalizerInput = {
   piSessionId: string;
   origin?: AgentEventOrigin;
+  // Root sessions already receive a Gateway user echo; observed children do not.
+  includeUserMessages?: boolean;
   /**
    * High-water mark for Active Run identity on reattach/resume/fork.
    * The next `agent_start` becomes `run-{initialRunSeq + 1}`.
@@ -52,7 +54,7 @@ type PartState = {
 
 type MessageState = {
   messageId: string;
-  role: "assistant";
+  role: "user" | "assistant";
   parts: Map<number, PartState>;
 };
 
@@ -141,6 +143,21 @@ export function createAgentRuntimeEventNormalizer(
         body: part.body,
         ...(part.toolCallId ? { toolCallId: part.toolCallId } : {}),
       }));
+  }
+
+  function userParts(state: MessageState, content: unknown) {
+    const blocks = typeof content === "string" ? [{ type: "text", text: content }]
+      : Array.isArray(content) ? content : [];
+    state.parts.clear();
+    blocks.forEach((block, index) => {
+      if (!isRecord(block)) return;
+      const partId = `${state.messageId}:part-${index}`;
+      if (block.type === "text" && typeof block.text === "string") {
+        state.parts.set(index, { partId, partType: "text", body: block.text });
+      } else if (block.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+        state.parts.set(index, { partId, partType: "image", body: `data:${block.mimeType};base64,${block.data}` });
+      }
+    });
   }
 
   function partEvent(
@@ -359,7 +376,7 @@ export function createAgentRuntimeEventNormalizer(
         runId,
         turnId,
         messageId: openMessage.messageId,
-        role: "assistant",
+        role: openMessage.role,
         phase: "end",
         ...(options.abandoned ? { abandoned: true } : {}),
         parts: partSnapshots(openMessage),
@@ -400,16 +417,18 @@ export function createAgentRuntimeEventNormalizer(
       if (rawEvent.type === "message_start" && runId && turnId) {
         const rawMessage = isRecord(rawEvent.message) ? rawEvent.message : null;
 
-        if (rawMessage?.role !== "assistant") {
+        const role = rawMessage?.role;
+        if (role !== "assistant" && !(input.includeUserMessages && role === "user")) {
           return [];
         }
 
         messageSeq += 1;
         message = {
           messageId: `${turnId}:msg-${messageSeq}`,
-          role: "assistant",
+          role,
           parts: new Map(),
         };
+        if (role === "user") userParts(message, rawMessage?.content);
 
         return [
           {
@@ -417,15 +436,16 @@ export function createAgentRuntimeEventNormalizer(
             runId,
             turnId,
             messageId: message.messageId,
-            role: "assistant",
+            role,
             phase: "start",
+            ...(role === "user" ? { parts: partSnapshots(message) } : {}),
             surface: "chat",
             origin,
           },
         ];
       }
 
-      if (rawEvent.type === "message_update" && message) {
+      if (rawEvent.type === "message_update" && message?.role === "assistant") {
         const assistantMessageEvent = isRecord(rawEvent.assistantMessageEvent)
           ? rawEvent.assistantMessageEvent
           : null;
@@ -440,7 +460,9 @@ export function createAgentRuntimeEventNormalizer(
       if (rawEvent.type === "message_end" && runId && turnId && message) {
         const endedMessage = message;
         const rawMessage = isRecord(rawEvent.message) ? rawEvent.message : null;
-        const usageSummary = rawMessage ? usageSummaryFromMessage(rawMessage) : null;
+        if (rawMessage?.role !== endedMessage.role) return [];
+        if (endedMessage.role === "user") userParts(endedMessage, rawMessage.content);
+        const usageSummary = endedMessage.role === "assistant" ? usageSummaryFromMessage(rawMessage) : null;
 
         message = null;
 
@@ -450,7 +472,7 @@ export function createAgentRuntimeEventNormalizer(
             runId,
             turnId,
             messageId: endedMessage.messageId,
-            role: "assistant",
+            role: endedMessage.role,
             phase: "end",
             parts: partSnapshots(endedMessage),
             surface: "chat",

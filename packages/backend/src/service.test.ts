@@ -30,6 +30,7 @@ vi.mock("@earendil-works/pi-ai/bun-oauth", () => ({
 vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
   ...await importOriginal<typeof import("@earendil-works/pi-coding-agent")>(),
   createAgentSession,
+  DefaultResourceLoader: class { async reload() {} },
   SessionManager: {
     open: sessionManagerOpen,
     listAll: sessionManagerListAll,
@@ -854,9 +855,9 @@ describe("backend service", () => {
         piSessionId: "pi-session-sdk",
       }),
     });
-    expect(createAgentSession).toHaveBeenCalledWith({
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
       cwd: process.cwd(),
-    });
+    }));
     expect(piRpc.startCalls).toEqual([]);
     expect(piRpc.commands).toEqual([]);
 
@@ -1011,10 +1012,10 @@ describe("backend service", () => {
     expect(sessionManagerOpen).toHaveBeenCalledWith(
       "/Users/void/.pi/agent/sessions/project/pi-session-resumed.jsonl",
     );
-    expect(createAgentSession).toHaveBeenCalledWith({
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
       cwd: process.cwd(),
       sessionManager,
-    });
+    }));
     await expect(projections.list()).resolves.toEqual([
       expect.objectContaining({
         sessionId: "session-resumed",
@@ -1111,10 +1112,10 @@ describe("backend service", () => {
     expect(sessionManager.createBranchedSession).toHaveBeenCalledWith(
       "pi-entry-parent",
     );
-    expect(createAgentSession).toHaveBeenCalledWith({
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
       cwd: process.cwd(),
       sessionManager,
-    });
+    }));
     await expect(projections.list()).resolves.toEqual([
       expect.objectContaining({
         sessionId: "session-forked",

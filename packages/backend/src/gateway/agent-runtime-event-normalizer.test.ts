@@ -1051,6 +1051,72 @@ describe("agent runtime event normalizer", () => {
     expect(events).toEqual([]);
   });
 
+  it("includes a child's real initial task when user message observation is enabled", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId, includeUserMessages: true });
+    const user = { role: "user", content: "Read the project configuration" };
+    const assistant = { role: "assistant", content: [] };
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" },
+      { type: "turn_start" },
+      { type: "message_start", message: user },
+      { type: "message_end", message: user },
+      { type: "message_start", message: assistant },
+      { type: "message_end", message: assistant },
+    ]);
+    const messages = events.filter((event): event is Extract<AgentRuntimeEvent, { type: "message" }> => event.type === "message");
+    expect(messages.map(event => [event.role, event.phase])).toEqual([
+      ["user", "start"], ["user", "end"], ["assistant", "start"], ["assistant", "end"],
+    ]);
+    expect(messages[1]).toMatchObject({
+      runId: "pi-session-1:run-1", turnId: "pi-session-1:run-1:turn-1",
+      parts: [{ partType: "text", body: user.content }],
+    });
+    expect(messages[0].parts?.[0]?.body).toBe(user.content);
+    expect(messages[0].messageId).toBe(messages[1].messageId);
+    expect(messages[2].messageId).not.toBe(messages[0].messageId);
+  });
+
+  it("preserves the final user text and image content from SDK message boundaries", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId, includeUserMessages: true });
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" }, { type: "turn_start" },
+      { type: "message_start", message: { role: "user", content: "Before input processing" } },
+      { type: "message_end", message: { role: "user", content: [
+        { type: "text", text: "Inspect this screenshot" },
+        { type: "image", data: "image-fixture", mimeType: "image/png" },
+        { type: "text", text: "Explain the selected element" },
+      ] } },
+    ]);
+    const ended = events.find((event): event is Extract<AgentRuntimeEvent, { type: "message" }> => event.type === "message" && event.phase === "end");
+    expect(ended?.parts?.map(part => ({ partType: part.partType, body: part.body }))).toEqual([
+      { partType: "text", body: "Inspect this screenshot" },
+      { partType: "image", body: "data:image/png;base64,image-fixture" },
+      { partType: "text", body: "Explain the selected element" },
+    ]);
+    expect(new Set(ended?.parts?.map(part => part.partId)).size).toBe(3);
+    expect(events.some(event => event.type === "usage")).toBe(false);
+  });
+
+  it("keeps steering and follow-up user messages distinct across turns and runs", () => {
+    const normalizer = createAgentRuntimeEventNormalizer({ piSessionId, includeUserMessages: true, initialRunSeq: 3 });
+    const user = (body: string) => [
+      { type: "message_start", message: { role: "user", content: body } },
+      { type: "message_end", message: { role: "user", content: body } },
+    ];
+    const events = normalizeAll(normalizer, [
+      { type: "agent_start" }, { type: "turn_start" }, ...user("Initial task"),
+      { type: "turn_end" }, { type: "turn_start" }, ...user("Steer one"), ...user("Steer two"),
+      { type: "turn_end" }, { type: "agent_end", messages: [] },
+      { type: "agent_start" }, { type: "turn_start" }, ...user("Follow-up task"),
+    ]);
+    const messages = events.filter((event): event is Extract<AgentRuntimeEvent, { type: "message" }> => event.type === "message" && event.phase === "end");
+    expect(messages.map(event => event.parts?.[0]?.body)).toEqual(["Initial task", "Steer one", "Steer two", "Follow-up task"]);
+    expect(new Set(messages.map(event => event.messageId)).size).toBe(4);
+    expect(messages.map(event => event.turnId)).toEqual([
+      "pi-session-1:run-4:turn-1", "pi-session-1:run-4:turn-2", "pi-session-1:run-4:turn-2", "pi-session-1:run-5:turn-1",
+    ]);
+  });
+
   it("continues run identity from initialRunSeq after reattach (DF-008)", () => {
     const normalizer = createAgentRuntimeEventNormalizer({
       piSessionId,
