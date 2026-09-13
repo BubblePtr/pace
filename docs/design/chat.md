@@ -48,6 +48,8 @@
 <PromptInput status="loading" … />
 ```
 
+外壳使用 Astryx `ChatComposer elevation="low"`，保留既有底色、24px 外观圆角对应的 token 计算和内容间距；不再使用 flat 变体的 border / inset ring。纯外阴影仅在 `chat.css` 的 Composer 作用域内定义，不影响 TextInput；neutral 默认 elevation token 在深色下带 inset 高光，因此这里用 `--color-shadow` 与 spacing token 组合替代。默认、悬停、聚焦保持同一层阴影，文件拖入时外阴影带强调色，不另加描边；强制颜色模式保留系统色聚焦轮廓。组件参数不增加外观选项；Design 的既有 ready / streaming / error 示例直接反映当前样式。
+
 ### 其余 Composer 件
 
 - `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态），点选后把文案填入草稿并聚焦输入框。

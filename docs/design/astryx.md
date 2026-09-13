@@ -80,6 +80,12 @@ Astryx 的 props 以 `bunx astryx component <Name>` 输出为准，本文只记�
  └── 自由文本 / 密钥 → TextInput（受控，`value` + `onChange`）
 ```
 
+### 文本输入框的层级
+
+普通 TextInput 是嵌入页面的表单控件，沿用 Astryx 默认边框、悬停 / 聚焦内描边及校验 / 禁用样式，不套用 Composer 的外阴影。官方 `TextInputSearch` 与 `FormLayoutHorizontalLabels` 示例均直接使用 TextInput；Field 仅为自定义控件补标签与状态，不要再包住 TextInput。
+
+只有 Live Chat 的 Composer 需要与对话内容区分，保留局部、恒定的轻量外阴影（见 [chat.md](chat.md)）。不要以“都是输入”为由统一两者的视觉层级。Trajectory 的原生过滤框也保持原有边框样式。
+
 ## 加载、错误、零态
 
 只有这几种形态，别引入 `Skeleton` / `Spinner` / `ProgressBar`（仓库 0 调用）：

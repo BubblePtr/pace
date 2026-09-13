@@ -244,7 +244,7 @@ export function ChatPromptInput({
     >
       <ChatComposer
         drawer={drawer}
-        elevation="none"
+        elevation="low"
         footerActions={startActions}
         input={
           <PromptTextArea

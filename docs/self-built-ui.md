@@ -95,6 +95,10 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 - 表二的方向落地后:issue 关闭,组件移入表一。
 - 每轮 UI 工作收尾时核对本表,状态漂移当场修。
 
+## 输入框外观调整
+
+仅 ChatPromptInput 使用局部、恒定的纯外阴影，保持原结构与间距，并更新 Design 的既有 Composer 示例说明。普通 TextInput 恢复 Astryx 默认边框 / 内描边，Trajectory 原生过滤框保持原样；撤销统一输入外阴影及其临时 TextInput 示例。没有新增自建输入原语或皮肤变体。规则见 [astryx.md](design/astryx.md) 与 [chat.md](design/chat.md)。
+
 ## 设置弹窗
 
 About & Updates 的品牌行复用应用图标与 Astryx Stack、Heading、Text，显示 Pace Agent 和版本号；属于页面组合，不新增共享组件。更新导航标记同样是页面组合，复用 Astryx `Token size="sm"`：桌面 SideNav 与窄屏 Tab 都显示 Update / Ready，并跟随共享 updater 状态；不新增自建原语或 Design 页变体。
