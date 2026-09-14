@@ -15,6 +15,30 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.9",
+    date: "2026-09-14",
+    title: "Instant history, isolated sessions",
+    summary: "Past sessions open without waiting for Pi, every running session gets its own process, and extensions no longer need a system Node.js.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.9",
+    changes: [
+      {
+        kind: "improved",
+        title: "Session history opens instantly",
+        description: "Reopening a past session shows its timeline right away from the local journal. Pi and its extensions start only when you send a message, queue one, or switch models.",
+      },
+      {
+        kind: "improved",
+        title: "Isolated session processes",
+        description: "Each running session gets its own Pi process and working directory, so projects no longer leak plugin state into each other and a crashed session leaves the others running.",
+      },
+      {
+        kind: "improved",
+        title: "Extensions without extra setup",
+        description: "Background extensions such as pi-subagents run inside the session's own runtime; installing Node.js 22.19+ separately is no longer required.",
+      },
+    ],
+  },
+  {
     version: "0.0.8",
     date: "2026-09-13",
     title: "Quieter fixes",
