@@ -53,6 +53,7 @@ const mainBuild = {
     input: {
       main: resolve(__dirname, "electron/main.ts"),
       backend: resolve(__dirname, "electron/backend.ts"),
+      "session-worker": resolve(__dirname, "electron/session-worker.ts"),
     },
     output: {
       entryFileNames: "[name].js",

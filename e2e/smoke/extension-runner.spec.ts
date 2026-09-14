@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { launchPace } from "../fixtures/electron-app";
@@ -53,7 +53,7 @@ export default function(pi) {
 `;
 
 for (const authMode of ["api-key", "codex-oauth"] as const) {
-  test(`in-process Tintinweb subagents in packaged Pace: ${authMode}`, async ({}, testInfo) => {
+  test(`original Tintinweb owns children inside isolated root Sessions: ${authMode}`, async ({}, testInfo) => {
     test.skip(!plugin, "Set PACE_TEST_TINTIN_SUBAGENTS_DIR to @tintinweb/pi-subagents with its dependencies");
     const before = await fingerprint(plugin!);
     test.setTimeout(60_000);
@@ -128,7 +128,6 @@ for (const authMode of ["api-key", "codex-oauth"] as const) {
         "subagents.json": JSON.stringify({ fallbackSubagent: "none", rememberAgents: false }),
         ...(authMode === "codex-oauth" ? { "auth.json": JSON.stringify({ "openai-codex": { type: "oauth", access, refresh: "fixture-refresh", expires: Date.now() + 3_600_000, accountId: "fixture-account" } }) } : {}),
         "models.json": JSON.stringify({ providers: { [provider]: { baseUrl: `http://127.0.0.1:${address.port}/v1`, api, ...(authMode === "api-key" ? { apiKey: "local-test-placeholder" } : {}), models: [{ id: "probe", name: "Probe", reasoning: false, input: ["text"], contextWindow: 16000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }),
-        "agents/probe.md": `---\nname: probe\ndescription: Trial agent\nmodel: ${model}\ntools: read\n---\nFollow the task.\n`,
       },
     });
     const root = dirname(app.project!.path);
@@ -138,6 +137,8 @@ for (const authMode of ["api-key", "codex-oauth"] as const) {
     const invoke = (method: string, params: any) => app.window.evaluate(({ method, params }) => window.pace!.invoke<any>(method, params), { method, params });
     const result: any = { authMode, requests: 0, executable: process.env.PACE_E2E_EXECUTABLE };
     try {
+      await mkdir(join(app.project!.path, ".pi/agents"), { recursive: true });
+      await writeFile(join(app.project!.path, ".pi/agents/probe.md"), `---\nname: probe\ndescription: Project-only agent\nmodel: ${model}\ntools: read\n---\nFollow the task.\n`);
       await writeFile(join(app.project!.path, "trial-probe.txt"), "READ_FROM_CORRECT_PROJECT");
       const created = await invoke("create_session", { sessionId: `tintin-${authMode}`, projectId: app.project!.path, cwd: app.project!.path });
       result.created = created;
@@ -181,6 +182,45 @@ for (const authMode of ["api-key", "codex-oauth"] as const) {
       expect(result.parentContinuesBeforeChild).toBe(true);
       expect(result.childRead).toBe(true);
       expect(result.allAuthValid).toBe(true);
+
+      const secondCwd = join(root, "second-project");
+      await mkdir(join(secondCwd, ".pi/agents"), { recursive: true });
+      await writeFile(join(secondCwd, ".pi/agents/probe-b.md"), `---\nname: probe-b\ndescription: Second project only\nmodel: ${model}\ntools: read\n---\nFollow the task.\n`);
+      await writeFile(join(secondCwd, "trial-probe.txt"), "READ_FROM_SECOND_PROJECT");
+      const originalPid = result.events.find((event: any) => event.sessionId === piSessionId && event.type === "session_start").pid;
+      process.kill(originalPid, "SIGKILL");
+      await expect.poll(async () => (await invoke("get_runtime_snapshot", { piSessionId })).status).toBe("failed");
+      // Even if the caller's cwd drifted, Pi's saved cwd must be established
+      // before the resumed root reloads project extensions and agents.
+      const resumed = await invoke("resume_session", { ...created, cwd: secondCwd });
+      expect(await realpath(resumed.cwd)).toBe(await realpath(app.project!.path));
+      const second = await invoke("create_session", { sessionId: "second", projectId: secondCwd, cwd: secondCwd });
+      await invoke("send_prompt", { piSessionId: second.piSessionId, prompt: "SPAWN:survivor:probe-b" });
+      await expect.poll(() => holds.has("survivor")).toBe(true);
+      await send("SPAWN:deleted");
+      await expect.poll(() => holds.has("deleted")).toBe(true);
+      await idle();
+      const starts = (await events()).filter(event => event.type === "session_start");
+      const a = starts.filter(event => event.sessionId === piSessionId).at(-1);
+      const b = starts.find(event => event.sessionId === second.piSessionId);
+      expect(a.processCwd).toBe(await realpath(app.project!.path));
+      expect(b.processCwd).toBe(await realpath(secondCwd));
+      expect(a.pid).not.toBe(b.pid);
+      await invoke("delete_session", { sessionId: `tintin-${authMode}` });
+      await expect.poll(() => holds.get("deleted")!.closed).toBe(true);
+      expect(holds.get("survivor")!.closed).toBe(false);
+      expect((await events()).some(event => event.sessionId === piSessionId && event.type === "session_shutdown")).toBe(true);
+      holds.get("survivor")!.release();
+      await expect.poll(() => requests.some(request => request.childPrompt && JSON.stringify(request.body).includes("READ_FROM_SECOND_PROJECT"))).toBe(true);
+      await expect.poll(async () => (await invoke("get_runtime_snapshot", { piSessionId: second.piSessionId })).status).not.toBe("running");
+      await invoke("send_prompt", { piSessionId: second.piSessionId, prompt: "SPAWN:quit:probe-b" });
+      await expect.poll(() => holds.has("quit")).toBe(true);
+      const closed = app.app.waitForEvent("close");
+      await app.app.evaluate(({ app }) => app.quit());
+      await closed;
+      await expect.poll(() => holds.get("quit")!.closed).toBe(true);
+      expect((await events()).some(event => event.sessionId === second.piSessionId && event.type === "session_shutdown")).toBe(true);
+      expect(await fingerprint(plugin!)).toBe(before);
     } finally {
       result.events = await events();
       result.requestLog = requests;

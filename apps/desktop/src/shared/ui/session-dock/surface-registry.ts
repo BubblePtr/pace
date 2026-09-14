@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Bot, FileDiff, Files, Globe, Terminal } from "@/shared/ui/icons";
+import { FileDiff, Files, Globe, Terminal } from "@/shared/ui/icons";
 
 /**
  * Registry of the Session-scoped surfaces the SessionDock can host.
@@ -9,7 +9,7 @@ import { Bot, FileDiff, Files, Globe, Terminal } from "@/shared/ui/icons";
  * dependency on Session state. ADR-0007 deferred the File surface; it is now
  * unfrozen as a read-only checkout browser — editing stays out of scope.
  */
-export type SessionSurfaceId = "changes" | "files" | "terminal" | "browser" | "subagents";
+export type SessionSurfaceId = "changes" | "files" | "terminal" | "browser";
 
 export type SessionSurfaceMeta = {
   id: SessionSurfaceId;
@@ -41,11 +41,9 @@ export const sessionSurfaceOrder = [
   "files",
   "terminal",
   "browser",
-  "subagents",
 ] as const satisfies readonly SessionSurfaceId[];
 
 export const sessionSurfaces: Record<SessionSurfaceId, SessionSurfaceMeta> = {
-  subagents: { id: "subagents", title: "Subagents", icon: Bot, hint: "Observe delegated work and its trace", flushContent: true },
   changes: {
     id: "changes",
     title: "Changes",

@@ -24,7 +24,6 @@ import {
   AgentWorkspaceSessionsView,
   SessionChangesPanel,
   SessionToolbarActions,
-  SubagentActivityControls,
 } from "@/pages/agent-workspace";
 import { addProjectToRegistry } from "@/entities/project/project-registry";
 import { SessionProjectionsProvider } from "@/entities/session/use-session-projections";
@@ -8621,19 +8620,5 @@ describe("Chain of Thought phases in Live Chat", () => {
     // wide: chat.css stretches it through `:has(> .chain-of-thought)`, which
     // only holds while the block is a direct child.
     expect(cotBlock().parentElement).toHaveAttribute("data-slot", "chat-message-body");
-  });
-});
-
-
-describe("subagent activity controls", () => {
-  it("keeps navigation and whole-task stop available while only children are active", async () => {
-    const user = userEvent.setup();
-    const open = vi.fn();
-    const stop = vi.fn();
-    render(<SubagentActivityControls activeSubagentCount={2} onOpenSubagents={open} onStopWork={stop} />);
-    await user.click(screen.getByRole("button", { name: "2 active subagents" }));
-    expect(open).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: "Stop all work" }));
-    expect(stop).toHaveBeenCalledOnce();
   });
 });

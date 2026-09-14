@@ -1,4 +1,3 @@
-import type { SubagentObserver } from "../drivers/subagent-observer";
 import { homedir } from "node:os";
 import { access } from "node:fs/promises";
 import type {
@@ -132,7 +131,6 @@ export type RuntimeGatewayService = {
 
 export type RuntimeGatewayServiceOptions = {
   driver: PiRuntimeDriver;
-  subagents?: SubagentObserver;
   // Boundary-event journal backing snapshot replay; without it snapshots
   // fall back to whatever events the driver reports (historically none).
   journal?: SessionEventJournal;
@@ -212,7 +210,7 @@ export function createRuntimeGatewayService(
     async handleRequest(request) {
       const params = paramsRecord(request.params);
       const piSessionId = typeof params.piSessionId === "string" ? params.piSessionId : undefined;
-      const bypassQueue = ["stop_run", "stop_subagent", "steer_subagent", "get_subagents", "get_subagent_snapshot"].includes(request.method);
+      const bypassQueue = request.method === "stop_run";
       const key = bypassQueue ? undefined : typeof params.sessionId === "string" ? params.sessionId
         : piSessionId ? sessionIdsByPiSessionId.get(piSessionId) ?? piSessionId : undefined;
       let release: (() => void) | undefined;
@@ -240,7 +238,6 @@ export function createRuntimeGatewayService(
         let result = await dispatchRuntimeGatewayRequest({
           request,
           driver: options.driver,
-          subagents: options.subagents,
           flushProjections: () => projectionWrites.flush(),
           journal: options.journal,
           projections: options.projections,
@@ -313,7 +310,6 @@ export function createRuntimeGatewayService(
 async function dispatchRuntimeGatewayRequest(input: {
   request: RuntimeGatewayRequest;
   driver: PiRuntimeDriver;
-  subagents?: SubagentObserver;
   journal?: SessionEventJournal;
   projections?: SessionProjectionStore;
   dataDir: string;
@@ -546,22 +542,7 @@ async function dispatchRuntimeGatewayRequest(input: {
 
       return controls;
     }
-    case "get_subagents":
-      return input.subagents?.list(requiredString(params.piSessionId, "piSessionId")) ?? { available: false, records: [] };
-    case "get_subagent_snapshot":
-    case "stop_subagent":
-    case "steer_subagent": {
-      if (!input.subagents) throw new Error("Subagent observation is unavailable.");
-      const root = requiredString(params.piSessionId, "piSessionId");
-      const agent = requiredString(params.agentId, "agentId");
-      if (input.request.method === "get_subagent_snapshot") return input.subagents.getAgent(root, agent);
-      if (input.request.method === "stop_subagent") await input.subagents.stop(root, agent);
-      else await input.subagents.steer(root, agent, requiredString(params.message, "message"));
-      return { ok: true };
-    }
     case "archive_session": {
-      const { projection } = await requireProjection({ store: input.projections, sessionId: requiredString(params.sessionId, "sessionId") });
-      if (input.subagents?.hasActive(projection.piSessionId)) throw new Error("Cannot archive a Session with active subagents.");
       return archiveSessionProjection({
         store: input.projections,
         sessionId: requiredString(params.sessionId, "sessionId"),

@@ -1,10 +1,17 @@
 import type { MessagePortMain } from "electron";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { createBackendService, migrateDataDir } from "@pace/backend";
+import { createSessionProcessDriver } from "../../../packages/backend/src/drivers/session-process-driver";
+import { resolveAgentDir } from "../../../packages/backend/src/workspace/sessions";
 
 const { parentPort } = process;
 const service = createBackendService({
   dataDir: migrateDataDir(process.env, homedir()),
+  runtimeDriver: createSessionProcessDriver({
+    entryPath: join(__dirname, "session-worker.js"),
+    agentDir: resolveAgentDir(),
+  }),
 });
 
 parentPort.on("message", async (event) => {

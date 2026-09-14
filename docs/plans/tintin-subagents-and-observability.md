@@ -1,3 +1,5 @@
+> 历史方案：宿主专用子代理协议与完整观测部分已由 [ADR-0040](../adr/0040-root-session-process-isolation.md) 取代。当前边界见[子代理运行说明](../subagent-observation.md)。下文保留当时的设计依据。
+
 # Tintinweb 子代理集成与观测规划
 
 - 日期：2026-09-13

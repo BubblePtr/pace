@@ -269,8 +269,6 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
     case "login_provider_oauth":
     case "logout_provider_auth":
       return invokeBrowserFallback("list_provider_auth_status");
-    case "get_subagents":
-      return Promise.resolve({ available: false, records: [] } as T);
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);
     case "list_available_model_controls":
