@@ -10,6 +10,8 @@ import {
 } from "./runtime-gateway";
 import { createInMemorySessionEventJournal } from "../persistence/session-event-journal";
 import { createInMemorySessionProjectionStore } from "../persistence/session-projection-store";
+import { createPiSdkDriver } from "../drivers/pi-sdk-driver";
+import { createPublicPiSdkRuntimeResumer } from "../drivers/pi-sdk-runtime-adapter";
 
 let defaultDataDir: string;
 beforeEach(async () => {
@@ -191,6 +193,109 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done; });
   return { promise, resolve };
 }
+
+it("reads cold history without initializing Pi, even when execution dependencies are broken", async () => {
+  const resume = vi.fn(async () => { throw new Error("extension initialization failed"); });
+  const driver = createPiSdkDriver({ runtimeResumer: resume });
+  const projections = createInMemorySessionProjectionStore();
+  const journal = createInMemorySessionEventJournal();
+  await projections.save({ sessionId: "cold", runtimeId: "pi-sdk:cold", piSessionId: "pi-cold",
+    projectId: "chat", cwd: join(defaultDataDir, "missing-cwd"), status: "completed",
+    sessionFile: "/missing/pi.jsonl", updatedAt: "2026-09-14T00:00:00.000Z" });
+  journal.append({ id: "history", seq: 42, sessionId: "cold", piSessionId: "pi-cold",
+    type: "message_update", ts: "2026-09-14T00:00:00.000Z",
+    payload: { kind: "message", role: "assistant", body: "Saved answer" } });
+  const gateway = createRuntimeGatewayService({ driver, projections, journal });
+
+  const response = await gateway.handleRequest({ id: "open", method: "get_runtime_snapshot",
+    params: { sessionId: "cold", piSessionId: "pi-cold" } });
+
+  expect(response.error).toBeUndefined();
+  expect(response.result).toMatchObject({ executionState: "cold", events: [
+    expect.objectContaining({ seq: 42, payload: expect.objectContaining({ body: "Saved answer" }) }),
+  ] });
+  expect(resume).not.toHaveBeenCalled();
+  await expect(stat(join(defaultDataDir, "missing-cwd"))).rejects.toThrow();
+});
+
+it("prepares a cold Session once for concurrent commands and keeps history readable during preparation", async () => {
+  const entered = deferred();
+  const release = deferred();
+  const prompts: string[] = [];
+  const resume = vi.fn(async () => {
+    entered.resolve();
+    await release.promise;
+    return { piSessionId: "pi-cold", runtimeId: "pi-sdk:cold", status: "idle" as const,
+      seedPromptCount: 3, sendPrompt: async (prompt: string) => { prompts.push(prompt); } };
+  });
+  const driver = createPiSdkDriver({ runtimeResumer: resume });
+  const projections = createInMemorySessionProjectionStore();
+  const journal = createInMemorySessionEventJournal();
+  await projections.save({ sessionId: "cold", runtimeId: "pi-sdk:cold", piSessionId: "pi-cold",
+    projectId: "project", cwd: "/repo", status: "completed", sessionFile: "/pi.jsonl",
+    updatedAt: "2026-09-14T00:00:00.000Z" });
+  journal.append({ id: "history", seq: 42, sessionId: "cold", piSessionId: "pi-cold",
+    type: "message_update", ts: "2026-09-14T00:00:00.000Z", payload: { kind: "message", role: "user", body: "old" } });
+  const gateway = createRuntimeGatewayService({ driver, projections, journal });
+  const first = gateway.handleRequest({ id: "send-1", method: "send_prompt", params: { piSessionId: "pi-cold", prompt: "first" } });
+  // A broken implementation can reject before reaching the gate.
+  await Promise.race([entered.promise, first]);
+  const second = gateway.handleRequest({ id: "send-2", method: "send_prompt", params: { sessionId: "cold", piSessionId: "pi-cold", prompt: "second" } });
+  const history = await gateway.handleRequest({ id: "open", method: "get_runtime_snapshot", params: { sessionId: "cold", piSessionId: "pi-cold" } });
+  expect(history).toMatchObject({ result: { executionState: "cold", events: [expect.objectContaining({ seq: 42 })] } });
+  expect(prompts).toEqual([]);
+  release.resolve();
+  const responses = await Promise.all([first, second]);
+  expect(responses.map(response => response.error)).toEqual([undefined, undefined]);
+  expect(resume).toHaveBeenCalledOnce();
+  expect(prompts).toEqual(["first", "second"]);
+  expect(responses.map(response => (response.result as { seq: number }).seq)).toEqual([43, 44]);
+  expect((responses[0].result as { payload: { messageId: string } }).payload.messageId).toBe("pi-sdk:pi-cold:user:3");
+});
+
+it("shares a failed SDK initialization, then retries extensions and submits only the retried prompt", async () => {
+  const entered = deferred();
+  const release = deferred();
+  const bindExtensions = vi.fn().mockImplementationOnce(async () => {
+    entered.resolve(); await release.promise; throw new Error("Extension failed to start");
+  }).mockResolvedValue(undefined);
+  const prompt = vi.fn(async () => {});
+  const dispose = vi.fn();
+  const manager = { getCwd: () => "/repo", getSessionFile: () => "/pi.jsonl" };
+  const createAgentSession = vi.fn(async () => ({ session: {
+    sessionId: "pi-cold", messages: [], isStreaming: false, sessionManager: manager,
+    bindExtensions, prompt, abort: async () => {}, dispose, subscribe: () => () => {},
+  } }));
+  const driver = createPiSdkDriver({ runtimeResumer: createPublicPiSdkRuntimeResumer({ sdk: {
+    SessionManager: { open: () => manager }, createAgentSession,
+  } }) });
+  const projections = createInMemorySessionProjectionStore();
+  await projections.save({ sessionId: "cold", runtimeId: "runtime", piSessionId: "pi-cold", projectId: "p",
+    cwd: "/repo", status: "completed", sessionFile: "/pi.jsonl", updatedAt: "2026-09-14T00:00:00.000Z" });
+  const gateway = createRuntimeGatewayService({ driver, projections, journal: createInMemorySessionEventJournal() });
+  const open = () => gateway.handleRequest({ id: "open", method: "get_runtime_snapshot", params: { piSessionId: "pi-cold" } });
+  await open();
+  expect(createAgentSession).not.toHaveBeenCalled();
+  expect(bindExtensions).not.toHaveBeenCalled();
+  const send = (id: string) => gateway.handleRequest({ id, method: "send_prompt", params: { piSessionId: "pi-cold", prompt: id } });
+  const first = send("first");
+  await entered.promise;
+  const second = send("second");
+  await open();
+  release.resolve();
+  expect((await Promise.all([first, second])).map(response => response.error)).toEqual([
+    "Extension failed to start", "Extension failed to start",
+  ]);
+  expect(createAgentSession).toHaveBeenCalledOnce();
+  expect(dispose).toHaveBeenCalledOnce();
+  expect(prompt).not.toHaveBeenCalled();
+  expect(await open()).toMatchObject({ result: { executionState: "cold" } });
+  expect(await send("retry")).not.toHaveProperty("error");
+  expect(createAgentSession).toHaveBeenCalledTimes(2);
+  expect(bindExtensions).toHaveBeenCalledTimes(2);
+  expect(prompt).toHaveBeenCalledExactlyOnceWith("retry");
+  await driver.dispose?.();
+});
 
 it("journals recoverable extension errors without failing the active session", async () => {
   const driver = createFakeRuntimeDriver();
@@ -1051,7 +1156,7 @@ describe("Runtime Gateway service", () => {
     expect(await persisted.get("app")).toBeNull();
   });
 
-  it("serializes a snapshot read with deletion so the late snapshot cannot recreate the Session", async () => {
+  it("does not recreate a deleted Session when an earlier read-only snapshot returns", async () => {
     const persisted = createInMemorySessionProjectionStore();
     const operations: string[] = [];
     const projections = {
@@ -1085,8 +1190,8 @@ describe("Runtime Gateway service", () => {
     finishRead.resolve();
     const responses = await Promise.all([snapshot, deleting]);
     expect(responses.every(response => !response.error)).toBe(true);
-    expect(removedDuringRead).toBe(false);
-    expect(operations).toEqual(["save", "remove"]);
+    expect(removedDuringRead).toBe(true);
+    expect(operations).toEqual(["remove"]);
     expect(await projections.get("app-session-1")).toBeNull();
   });
 

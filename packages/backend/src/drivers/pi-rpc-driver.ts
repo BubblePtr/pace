@@ -115,6 +115,7 @@ export function createPiRpcProcessDriver(
   });
 
   return {
+    hasSession: piSessionId => snapshots.has(piSessionId),
     async createSession(input) {
       const runtimeId = `pi-rpc:${input.sessionId}`;
 

@@ -38,7 +38,7 @@
 
 ### ChatPromptInput
 
-`status: "ready" | "submitted" | "streaming" | "error"`，默认 `"ready"`。没有 `"idle"`、没有 `"loading"`。两组布尔决定运行中的行为：`allowSubmitWhileRunning`（队列模式为 true）、`lockInputOnRun`（非队列模式为 true），两者互斥地取自同一个 `queueMode`。插槽：`startActions`（Plus 菜单 + 模型选择器）、`endActions`、`drawer`（附件抽屉）、`footer`（上下文圆环）。
+`status: "ready" | "submitted" | "streaming" | "error"`，默认 `"ready"`。没有 `"idle"`、没有 `"loading"`。两组布尔决定运行中的行为：`allowSubmitWhileRunning`（队列模式允许提交）、`lockInputOnRun`（普通发送锁定输入）。提交正在等待接受时，统一关闭队列提交并锁定输入，使用已有 `submitted` 状态；下方用 `<TextShimmer>Sending message…</TextShimmer>` 表示等待。失败保留草稿和历史，错误留在 composer。插槽：`startActions`（Plus 菜单 + 模型选择器）、`endActions`、`drawer`（附件抽屉）、`footer`（上下文圆环）。
 
 ```tsx
 // 正确 — agent-workspace.tsx:833
@@ -54,7 +54,7 @@
 
 - `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态），点选后把文案填入草稿并聚焦输入框。
 - `ChatQueuedMessage`：队列里的一条；`presence: "none" | "enter" | "exit"` 由 `usePresenceList` 给，不要自己传 `"enter"`。
-- `ModelSelectorControl`：`controls` 来自 projection，`isDisabled` 在队列模式为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
+- `ModelSelectorControl`：选中项来自 projection；冷会话缺少目录时异步读取 `list_available_model_controls`，不启动 Agent，读取失败不阻塞历史或发送。真正切换模型会准备运行环境。`isDisabled` 在队列模式或提交等待期间为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
 - `ComposerInsertMenu`：一级只有 Add files / Use skill / Chat commands / Use plugin 四项；技能与插件走 `CommandPalette` 搜索。`commands` 默认 `/compact` `/clear`。
 - `ComposerAttachmentDrawer`：`items` 为空返回 null；图片走 Thumbnail，文本走 Token。附件逻辑（大小上限、拒收文案、拼进 prompt）全在 `composer-attachment-logic.ts`，从 `composer-attachments/index.ts` 导入，不在页面里重算。
 
@@ -90,4 +90,4 @@
  └── 文字级占位 → <TextShimmer>；不要再放 ChatPixelLoader，心跳全局只有状态行一处
 ```
 
-冷开一个已有 Session 时，runtime 快照落地前 Live Chat 里没有任何 runtime 事件。`agent-workspace.tsx` 在消息列表末尾渲染一行 `role="status"` 的 `<TextShimmer>Resuming session…</TextShimmer>`（`data-testid="session-resume-status"`），与创建阶段的 `session-creation-status` 同一形态；resume 成功或失败后移除。不要为它引入骨架屏或 Spinner。
+打开已有 Session 时先读历史快照；`agent-workspace.tsx` 在消息列表末尾渲染一行 `role="status"` 的 `<TextShimmer>Loading history…</TextShimmer>`（`data-testid="session-history-status"`），与创建阶段的 `session-creation-status` 同一形态；读取成功或失败后移除。已有时间线保持可见，冷会话不因此恢复运行环境。历史读取失败使用原有 Retry；执行准备失败在 composer 显示。不要为它引入骨架屏或 Spinner。

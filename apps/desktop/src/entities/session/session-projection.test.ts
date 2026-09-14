@@ -21,6 +21,35 @@ function projection(overrides: Partial<SessionProjection>): SessionProjection {
 }
 
 describe("Session Projection state", () => {
+  it("shows interrupted cold history as settled and does not let a late snapshot replace newer live events", () => {
+    const base = projection({ piSessionId: "pi", status: "completed" });
+    const start = { seq: 1, timestamp: "2026-09-14T00:00:00.000Z", event: {
+      type: "run" as const, phase: "start" as const, runId: "run-1", piSessionId: "pi",
+      trigger: "prompt" as const, origin: "sdk" as const, surface: "hidden" as const,
+    } };
+    const state: PiSessionState = { piSessionId: "pi", runtimeId: "runtime", projectId: "p", cwd: "/repo",
+      executionState: "cold", status: "failed", events: [], replay: [{ kind: "agent", entry: start }], updatedAt: start.timestamp };
+    const history = applySessionProjectionEvent(base, { type: "runtime-state-resynced", state });
+    expect(history.status).toBe("failed");
+
+    const live = applySessionProjectionEvent(history, { type: "agent-event-received", entry: {
+      ...start, seq: 3, event: { ...start.event, runId: "run-2" },
+    } });
+    const restarted = applySessionProjectionEvent(live, { type: "runtime-state-resynced", state });
+    expect(restarted.status).toBe("failed");
+    expect(restarted.runtimeModel.runs.has("run-2")).toBe(false);
+    const refreshed = applySessionProjectionEvent(live, {
+      type: "runtime-state-resynced", state: { ...state, executionState: "ready" },
+    });
+    expect(refreshed.runtimeModel.lastSeq).toBe(3);
+    expect(refreshed.runtimeModel.runs.has("run-2")).toBe(true);
+    expect(refreshed.status).toBe("running");
+    const finished = applySessionProjectionEvent(refreshed, { type: "agent-event-received", entry: {
+      ...start, seq: 4, event: { ...start.event, runId: "run-2", phase: "end", outcome: "completed" },
+    } });
+    expect(finished.status).toBe("completed");
+  });
+
   it("keeps concurrent sessions in last user message order until the user sends again", () => {
     function send(session: SessionProjection, role: "user" | "assistant", timestamp: string) {
       return applySessionProjectionEvent(session, {

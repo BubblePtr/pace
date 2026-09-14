@@ -391,6 +391,7 @@ function stateFromSnapshot(snapshot: RuntimeGatewaySnapshot): PiSessionState {
   }
 
   const state: PiSessionState = {
+    executionState: snapshot.executionState,
     piSessionId: snapshot.piSessionId,
     sessionName: snapshot.sessionName,
     runtimeId: snapshot.runtimeId,
@@ -558,6 +559,7 @@ export function createRuntimeGatewayClient(
   const pendingEchoFingerprints = new Set<string>();
   const suppressedEnvelopeIds = new Set<string>();
   const liveCompatMapper = createAgentEventCompatMapper();
+  const snapshotReads = new Map<string, Set<RuntimeGatewayEventEnvelope[]>>();
   let unsubscribeBackendEvent: (() => void) | null = null;
 
   const rememberState = (state: PiSessionState) => {
@@ -627,6 +629,10 @@ export function createRuntimeGatewayClient(
 
       if (event.event.type === "subagent_record" || event.event.payload.type === "subagent_record") return;
 
+      for (const pending of snapshotReads.get(event.event.piSessionId) ?? []) {
+        pending.push(event.event);
+      }
+
       // Session metadata is consumed by the list provider, not the run timeline.
       if (event.event.payload.type === "session_info_changed") {
         const state = states.get(event.event.piSessionId);
@@ -672,6 +678,7 @@ export function createRuntimeGatewayClient(
   };
   const releaseBackendSubscriptionIfIdle = () => {
     const hasListeners =
+      snapshotReads.size > 0 ||
       [...listeners.values()].some((sessionListeners) => sessionListeners.size > 0) ||
       [...agentListeners.values()].some((sessionListeners) => sessionListeners.size > 0);
 
@@ -697,6 +704,33 @@ export function createRuntimeGatewayClient(
       return envelope;
     } finally {
       pendingEchoFingerprints.delete(fingerprint);
+    }
+  };
+
+  const readSnapshot = async (method: string, args: Record<string, unknown>, piSessionId: string) => {
+    const buffered: RuntimeGatewayEventEnvelope[] = [];
+    const reads = snapshotReads.get(piSessionId) ?? new Set<RuntimeGatewayEventEnvelope[]>();
+    reads.add(buffered);
+    snapshotReads.set(piSessionId, reads);
+    ensureBackendSubscription();
+    try {
+      const snapshot = await invoke<RuntimeGatewaySnapshot>(method, args);
+      // Subscribe before reading: a response can predate events already on
+      // screen. Replay the union, including live deltas, in Gateway order.
+      const events = new Map(snapshot.events.map(event => [event.seq, event]));
+      for (const event of buffered) events.set(event.seq, event);
+      const state = stateFromSnapshot({ ...snapshot,
+        events: [...events.values()].sort((a, b) => a.seq - b.seq),
+        executionState: buffered.some(({ payload }) =>
+          (payload.type === "run" && payload.phase === "start") || payload.kind === "message" || payload.kind === "control")
+          ? "ready" : snapshot.executionState,
+      });
+      rememberState(state);
+      return cloneSessionState(state);
+    } finally {
+      reads.delete(buffered);
+      if (!reads.size) snapshotReads.delete(piSessionId);
+      releaseBackendSubscriptionIfIdle();
     }
   };
 
@@ -756,6 +790,7 @@ export function createRuntimeGatewayClient(
 
     async sendInitialPrompt(input) {
       try {
+        const wasCold = states.get(input.piSessionId)?.executionState === "cold";
         const envelope = await invokeEventCommand(
           "send_prompt",
           {
@@ -774,10 +809,15 @@ export function createRuntimeGatewayClient(
 
         recordEvent(event, false);
 
+        // The prompt is already accepted. A metadata read failure must never
+        // invite the caller to retry that accepted prompt.
+        const state = wasCold ? await readSnapshot("get_runtime_snapshot", { piSessionId: input.piSessionId }, input.piSessionId)
+          .catch(() => undefined) : undefined;
         return {
           accepted: true,
           piSessionId: input.piSessionId,
           event: cloneRuntimeEvent(event),
+          ...(state ? { state } : {}),
         };
       } catch (error) {
         throw new PiRuntimeBridgeError({
@@ -961,6 +1001,14 @@ export function createRuntimeGatewayClient(
           stage: "starting runtime",
           message: errorMessage(error),
         });
+      }
+    },
+
+    async loadSession(input) {
+      try {
+        return await readSnapshot("get_runtime_snapshot", input, input.piSessionId);
+      } catch (error) {
+        throw new PiRuntimeBridgeError({ stage: "loading history", message: errorMessage(error) });
       }
     },
 

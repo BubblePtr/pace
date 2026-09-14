@@ -93,7 +93,7 @@ Session Draft 提交后的创建状态机。Pace 先创建 `creating` 状态的 
 _Avoid_: Draft editing, single-step create, invisible side effect
 
 **Resume**:
-打开一个当前没有存活 runtime 的 Session 并让它重新可继续对话的能力。它是 Gateway 能力而不是用户动词：用户只有"打开 Session"一个动作，底层走热 attach（runtime 仍存活）还是冷恢复（进程重启后从 Pi 会话记录重新打开）对用户透明。冷恢复时对话上下文永远由 Pi Runtime 从 Pi Session State 的持久记录自行重建，Pace 不自行拼装 LLM 上下文；UI 时间线来自 Session Event Journal 的回放，两者分工不可互换。
+让当前没有存活 runtime 的 Session 重新可执行的 Gateway 能力，由首次发送等真正依赖运行环境的操作触发；打开历史只读 Pace 的 Projection / Session Event Journal，已存活会话则复用原进程并订阅事件。冷恢复时 LLM 上下文由 Pi Runtime 从 Pi Session State 的持久记录自行重建，Pace 不自行拼装；UI 时间线仍以 Journal 为呈现真相。
 _Avoid_: Resume button, reattach-only recovery, Pace-rebuilt LLM context, plain session switch
 
 **Fork**:

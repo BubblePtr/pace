@@ -415,16 +415,15 @@ function runtimeModelAfterLegacyEvent(
   return model;
 }
 
-// Rebuilds the runtime model from the snapshot's replay sequence, in Gateway
-// seq order. The journal only carries boundary events, so the result is fully
-// static — no message is left streaming. Without a replay sequence (legacy
-// bridges) the model already accumulated live is kept as-is.
+// Replay includes journal boundaries and any live deltas buffered during the
+// read. A cold snapshot supersedes deltas left in memory by a dead process.
+// Legacy bridges without replay keep the model accumulated live.
 function runtimeModelFromReplay(
   current: SessionRuntimeModel,
   state: PiSessionState,
 ): SessionRuntimeModel {
   if (!state.replay?.length) {
-    return current;
+    return state.executionState === "cold" ? createSessionRuntimeModel() : current;
   }
 
   let model = createSessionRuntimeModel();
@@ -436,7 +435,7 @@ function runtimeModelFromReplay(
         : runtimeModelAfterLegacyEvent(model, step.event);
   }
 
-  return model;
+  return state.executionState !== "cold" && current.lastSeq > model.lastSeq ? current : model;
 }
 
 function runtimeEventIdentity(event: PiRuntimeEvent): string | null {
@@ -700,6 +699,11 @@ export function applySessionProjectionEvent(
       };
     case "runtime-state-resynced": {
       const runtimeModel = runtimeModelFromReplay(projection.runtimeModel, event.state);
+      const snapshotSeq = (event.state.replay ?? []).reduce(
+        (latest, step) => Math.max(latest, step.kind === "agent" ? step.entry.seq : step.seq),
+        0,
+      );
+      const hasNewerLiveEvents = projection.runtimeModel.lastSeq > snapshotSeq;
       const runtimeEvents = normalizedRuntimeEvents(event.state.events);
       // Resume snapshots stamp updatedAt=now(); list time must stay on last
       // message, not last open (DF-010).
@@ -707,9 +711,9 @@ export function applySessionProjectionEvent(
         ...projection,
         // Once the rebuilt model has Active Runs it owns the Session Status;
         // otherwise the bridge-reported state remains the truth.
-        status:
-          sessionStatusFromRuntimeModel(runtimeModel) ??
-          sessionStatusFromRuntimeState(event.state),
+        status: event.state.executionState === "cold" ? sessionStatusFromRuntimeState(event.state)
+          : hasNewerLiveEvents ? projection.status
+          : sessionStatusFromRuntimeModel(runtimeModel) ?? sessionStatusFromRuntimeState(event.state),
         runtimeId: event.state.runtimeId,
         piSessionId: event.state.piSessionId,
         cwd: event.state.cwd,

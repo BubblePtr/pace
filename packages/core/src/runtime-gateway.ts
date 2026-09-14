@@ -109,6 +109,8 @@ export type RuntimeToolSchemas = {
 };
 
 export type RuntimeGatewaySnapshot = {
+  // Absent on legacy drivers. Cold snapshots contain presentation history only.
+  executionState?: "cold" | "ready";
   sessionName?: string;
   sessionId: string;
   runtimeId: string;

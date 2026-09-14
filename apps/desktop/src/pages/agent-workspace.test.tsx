@@ -34,6 +34,7 @@ import {
   type ForkSessionResult,
   type PiSessionState,
   type PiRuntimeEvent,
+  type PiRuntimeBridge,
 } from "@/entities/runtime/pi-runtime-bridge";
 import * as inMemoryBridgeModule from "@/entities/runtime/in-memory-pi-runtime-bridge";
 import {
@@ -798,7 +799,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       ...api,
       async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
         const result = await api.invoke<T>(command, args);
-        if (command === "resume_session" || command === "get_runtime_snapshot") {
+        if (command === "get_runtime_snapshot") {
           const snapshot = result as unknown as import("@pace/core").RuntimeGatewaySnapshot;
           for (const envelope of snapshot.events) {
             const event = envelope.payload as import("@pace/core").AgentRuntimeEvent;
@@ -1066,7 +1067,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(invoke).not.toHaveBeenCalledWith("list_sessions", expect.anything());
   });
 
-  it("reloads projections and resumes the selected Session after backend recovery", async () => {
+  it("reloads projections and history for the selected Session after backend recovery", async () => {
     const backendListeners: Array<(event: BackendRpcEvent) => void> = [];
     const persisted = {
       sessionId: "persisted-session-1",
@@ -1089,7 +1090,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         return [persisted];
       }
 
-      if (command === "resume_session") {
+      if (command === "get_runtime_snapshot") {
         return {
           ...persisted,
           events: [],
@@ -1114,7 +1115,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     await waitFor(() => {
       expect(
-        invoke.mock.calls.filter(([command]) => command === "resume_session"),
+        invoke.mock.calls.filter(([command]) => command === "get_runtime_snapshot"),
       ).toHaveLength(1);
     });
 
@@ -1141,12 +1142,12 @@ describe("AgentWorkspaceSessionsPage", () => {
         invoke.mock.calls.filter(([command]) => command === "list_session_projections"),
       ).toHaveLength(2);
       expect(
-        invoke.mock.calls.filter(([command]) => command === "resume_session"),
+        invoke.mock.calls.filter(([command]) => command === "get_runtime_snapshot"),
       ).toHaveLength(2);
     });
   });
 
-  it("cold-resumes a selected persisted Session through the Runtime Gateway", async () => {
+  it("loads a selected persisted Session without resuming execution", async () => {
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
       if (command === "list_session_projections") {
         return [
@@ -1169,7 +1170,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         ];
       }
 
-      if (command === "resume_session") {
+      if (command === "get_runtime_snapshot") {
         return {
           sessionId: "persisted-session-1",
           runtimeId: "pi-sdk:persisted-session-1",
@@ -1211,23 +1212,17 @@ describe("AgentWorkspaceSessionsPage", () => {
     renderProjectSessions();
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("resume_session", {
+      expect(invoke).toHaveBeenCalledWith("get_runtime_snapshot", {
         sessionId: "persisted-session-1",
-        projectId: pigProjectPath,
         piSessionId: "pi-session-persisted-1",
-        cwd: pigProjectPath,
-        sessionFile: "/Users/void/.pi/agent/sessions/pig/pi-session-persisted-1.jsonl",
-        checkout: {
-          mode: "foreground-local",
-          root: pigProjectPath,
-          runtimeCwd: pigProjectPath,
-        },
       });
     });
     expect(await screen.findByText("Existing history")).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("resume_session", expect.anything());
   });
 
-  it("shows an unrecoverable persisted Session instead of silently opening an empty chat", async () => {
+  it("loads journal history even when the Pi context file is missing", async () => {
+    const user = userEvent.setup();
     const invoke = vi.fn(async (command: string) => {
       if (command === "list_session_projections") {
         return [
@@ -1245,6 +1240,15 @@ describe("AgentWorkspaceSessionsPage", () => {
         ];
       }
 
+      if (command === "get_runtime_snapshot") {
+        return { sessionId: "persisted-session-1", piSessionId: "pi-session-persisted-1", runtimeId: "runtime",
+          projectId: pigProjectPath, cwd: pigProjectPath, executionState: "cold", status: "completed",
+          events: [{ id: "history", seq: 1, sessionId: "persisted-session-1", piSessionId: "pi-session-persisted-1",
+            type: "message_update", ts: "2026-07-03T10:00:00.000Z", payload: { kind: "message", role: "assistant", body: "Saved answer without Pi file" } }],
+          updatedAt: "2026-07-03T10:00:00.000Z" };
+      }
+      if (command === "send_prompt") throw new Error("Pi session file is missing");
+
       throw new Error(`unexpected backend command ${command}`);
     });
     window.pace = {
@@ -1258,20 +1262,17 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     renderProjectSessions();
 
-    // The title also lands in the header and sidebar; count-free so a new
-    // surface showing it does not break the missing-file contract below.
-    await waitFor(() =>
-      expect(screen.getByTestId("runtime-fallback-banner")).toHaveTextContent(
-        "Session file is missing",
-      ),
-    );
-    expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent(
-      "Missing session file",
-    );
+    expect(await screen.findByText("Saved answer without Pi file")).toBeInTheDocument();
+    expect(screen.queryByTestId("runtime-fallback-banner")).not.toBeInTheDocument();
+    const input = screen.getByPlaceholderText("What do you want to know?");
+    await user.type(input, "Continue");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Pi session file is missing")).toBeInTheDocument();
+    expect(input).toHaveValue("Continue");
     expect(invoke).not.toHaveBeenCalledWith("resume_session", expect.anything());
   });
 
-  it("allows a failed cold resume to be retried for the same selected Session", async () => {
+  it("allows a failed history read to be retried for the same selected Session", async () => {
     const user = userEvent.setup();
     let resumeCalls = 0;
     const invoke = vi.fn(async (command: string) => {
@@ -1296,11 +1297,11 @@ describe("AgentWorkspaceSessionsPage", () => {
         ];
       }
 
-      if (command === "resume_session") {
+      if (command === "get_runtime_snapshot") {
         resumeCalls += 1;
 
         if (resumeCalls === 1) {
-          throw new Error("SessionManager.open failed");
+          throw new Error("Journal read failed");
         }
 
         return {
@@ -1330,14 +1331,14 @@ describe("AgentWorkspaceSessionsPage", () => {
     renderProjectSessions();
 
     expect(await screen.findByTestId("runtime-fallback-banner")).toHaveTextContent(
-      "SessionManager.open failed",
+      "Journal read failed",
     );
 
     await user.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => {
       expect(
-        invoke.mock.calls.filter(([command]) => command === "resume_session"),
+        invoke.mock.calls.filter(([command]) => command === "get_runtime_snapshot"),
       ).toHaveLength(2);
     });
   });
@@ -3294,15 +3295,106 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
   });
 
+  it("offers available models while cold without starting the Session to read the catalog", async () => {
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "list_available_model_controls") return { models: [{ provider: "openai", modelId: "gpt-5.5", name: "GPT-5.5", thinkingLevels: ["off", "high"] }], selected: null };
+      throw new Error(`Unexpected command ${command}`);
+    });
+    window.pace = { ...createMockApi(), invoke: invoke as unknown as NonNullable<typeof window.pace>["invoke"] };
+    const projection: SessionProjection = { ...createSessionProjection({ id: "cold-model", projectId: "pig-docs", initialPrompt: "Saved history", createdAt: "2026-09-14T00:00:00.000Z" }),
+      status: "completed", creationStage: "accepted", piSessionId: "pi", modelControls: { models: [], selected: { provider: "openai", modelId: "gpt-5.5", thinkingLevel: "high" } } };
+    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection} runtimeBridge={createInMemoryPiRuntimeBridge()} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_available_model_controls", undefined));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Model and Thinking" }));
+    expect(await screen.findByText("GPT-5.5", { exact: true })).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith("resume_session", expect.anything());
+  });
+
+  it("locks one cold submission and keeps its draft and history when preparation fails", async () => {
+    const user = userEvent.setup();
+    let reject!: (error: Error) => void;
+    const send = vi.fn(() => new Promise<never>((_resolve, fail) => { reject = fail; }));
+    const projection: SessionProjection = {
+      ...createSessionProjection({ id: "cold-send", projectId: "pig-docs", initialPrompt: "Saved history", createdAt: "2026-09-14T00:00:00.000Z" }),
+      status: "completed", creationStage: "accepted", runtimeId: "runtime", piSessionId: "pi-cold",
+      runtimeEvents: [{ id: "old", piSessionId: "pi-cold", kind: "message", role: "assistant", body: "Saved answer", timestamp: "2026-09-14T00:00:00.000Z" }],
+    };
+    render(<AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false} sessionProjection={projection}
+      runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), sendInitialPrompt: send }} />);
+    const input = screen.getByPlaceholderText("What do you want to know?");
+    await user.type(input, "Continue");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(input).toBeDisabled();
+    expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent("Saved answer");
+    await act(async () => reject(new Error("Extension initialization failed")));
+    expect(await screen.findByText("Extension initialization failed")).toBeInTheDocument();
+    expect(input).toHaveValue("Continue");
+    expect(input).toBeEnabled();
+    expect(screen.queryByTestId("runtime-fallback-banner")).not.toBeInTheDocument();
+  });
+
+  it("does not resubmit a pending prompt after switching away and back", async () => {
+    const user = userEvent.setup();
+    let resolve!: (value: Awaited<ReturnType<PiRuntimeBridge["sendInitialPrompt"]>>) => void;
+    const send = vi.fn(() => new Promise<Awaited<ReturnType<PiRuntimeBridge["sendInitialPrompt"]>>>(done => { resolve = done; }));
+    const runtimeBridge = { ...createInMemoryPiRuntimeBridge(), sendInitialPrompt: send };
+    const session = (id: string): SessionProjection => ({
+      ...createSessionProjection({ id, projectId: "pig-docs", initialPrompt: id, createdAt: "2026-09-14T00:00:00.000Z" }),
+      status: "completed", creationStage: "accepted", runtimeId: id, piSessionId: `pi-${id}`,
+    });
+    const a = session("a");
+    const b = session("b");
+    const view = (projection: SessionProjection) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+      sessionProjection={projection} runtimeBridge={runtimeBridge} />;
+    const { rerender } = render(view(a));
+    await user.type(screen.getByPlaceholderText("What do you want to know?"), "Continue A");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    rerender(view(b));
+    await waitFor(() => expect(screen.getByPlaceholderText("What do you want to know?")).toHaveValue(""));
+    rerender(view(a));
+    await waitFor(() => expect(screen.getByPlaceholderText("What do you want to know?")).toHaveValue("Continue A"));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(send).toHaveBeenCalledOnce();
+    await act(async () => resolve({ accepted: true, piSessionId: "pi-a", event: {
+      id: "accepted", piSessionId: "pi-a", kind: "message", role: "user", body: "Continue A", timestamp: "2026-09-14T00:01:00.000Z",
+    } }));
+    expect(screen.getByLabelText("Live Chat messages")).toHaveTextContent("Continue A");
+  });
+
+  it("reloads history on returning to a Session so background answers remain visible", async () => {
+    let reads = 0;
+    const runtimeBridge = { ...createInMemoryPiRuntimeBridge(), loadSession: async ({ piSessionId }: { piSessionId: string }) => {
+      if (piSessionId === "pi-a") reads += 1;
+      return { piSessionId, runtimeId: "runtime", projectId: "pig-docs", cwd: "/repo", status: "completed" as const,
+        events: [{ id: "answer", piSessionId, kind: "message" as const, role: "assistant" as const,
+          body: reads > 1 ? "Completed while away" : "Previous answer", timestamp: "2026-09-14T00:00:00.000Z" }],
+        updatedAt: "2026-09-14T00:00:00.000Z" };
+    } };
+    const a: SessionProjection = { ...createSessionProjection({ id: "a", projectId: "pig-docs", initialPrompt: "A", createdAt: "2026-09-14T00:00:00.000Z" }),
+      status: "completed", creationStage: "accepted", piSessionId: "pi-a", runtimeId: "runtime" };
+    const view = (projection: SessionProjection) => <AgentWorkspaceSessionsView projectId="pig-docs" showDraft={false}
+      sessionProjection={projection} runtimeBridge={runtimeBridge} />;
+    const { rerender } = render(view(a));
+    expect(await screen.findByText("Previous answer")).toBeInTheDocument();
+    rerender(view({ ...a, id: "b", piSessionId: "pi-b" }));
+    await waitFor(() => expect(screen.queryByTestId("session-history-status")).not.toBeInTheDocument());
+    rerender(view(a));
+    expect(await screen.findByText("Completed while away")).toBeInTheDocument();
+    expect(reads).toBe(2);
+  });
+
   it.each(["refresh", "reopen"])(
     "finishes a pending Session resume after a projection %s without duplicating the RPC",
     async (change) => {
       const bridge = createInMemoryPiRuntimeBridge();
       let resolveResume!: (state: PiSessionState) => void;
-      const resumeSession = vi.fn(() => new Promise<PiSessionState>((resolve) => {
+      const loadSession = vi.fn(() => new Promise<PiSessionState>((resolve) => {
         resolveResume = resolve;
       }));
-      const resumingBridge = { ...bridge, resumeSession };
+      const resumingBridge = { ...bridge, loadSession };
       const selected = {
         provider: "openai",
         modelId: "gpt-5.5",
@@ -3331,7 +3423,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         />
       );
       const { rerender } = render(view());
-      await waitFor(() => expect(resumeSession).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(loadSession).toHaveBeenCalledTimes(1));
 
       // A projection reload or a quick Draft round-trip must keep the pending result usable.
       if (change === "reopen") rerender(view(true));
@@ -3357,7 +3449,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
       await waitFor(() => expect(screen.getByTestId("model-thinking-trigger")).toBeEnabled());
       expect(screen.getByTestId("model-thinking-trigger")).toHaveTextContent("GPT-5.5 · High");
-      expect(resumeSession).toHaveBeenCalledTimes(1);
+      expect(loadSession).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -3387,44 +3479,44 @@ describe("AgentWorkspaceSessionsPage", () => {
 
     it("shows a resume status in the empty Live Chat until the runtime snapshot lands", async () => {
       let resolveResume!: (state: PiSessionState) => void;
-      const resumeSession = vi.fn(() => new Promise<PiSessionState>((resolve) => {
+      const loadSession = vi.fn(() => new Promise<PiSessionState>((resolve) => {
         resolveResume = resolve;
       }));
       render(
         <AgentWorkspaceSessionsView
           projectId="pig-docs"
-          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), resumeSession }}
+          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), loadSession }}
           sessionProjection={projection}
           showDraft={false}
         />,
       );
-      await waitFor(() => expect(resumeSession).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(loadSession).toHaveBeenCalledTimes(1));
 
-      expect(screen.getByTestId("session-resume-status")).toHaveTextContent("Resuming session");
+      expect(screen.getByTestId("session-history-status")).toHaveTextContent("Loading history");
 
       await act(async () => resolveResume(resumedState));
 
-      await waitFor(() => expect(screen.queryByTestId("session-resume-status")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("session-history-status")).toBeNull());
     });
 
     it("clears the resume status when the resume fails", async () => {
       let rejectResume!: (error: Error) => void;
-      const resumeSession = vi.fn(() => new Promise<PiSessionState>((_resolve, reject) => {
+      const loadSession = vi.fn(() => new Promise<PiSessionState>((_resolve, reject) => {
         rejectResume = reject;
       }));
       render(
         <AgentWorkspaceSessionsView
           projectId="pig-docs"
-          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), resumeSession }}
+          runtimeBridge={{ ...createInMemoryPiRuntimeBridge(), loadSession }}
           sessionProjection={projection}
           showDraft={false}
         />,
       );
-      await waitFor(() => expect(screen.getByTestId("session-resume-status")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("session-history-status")).toBeInTheDocument());
 
       await act(async () => rejectResume(new Error("runtime exploded")));
 
-      await waitFor(() => expect(screen.queryByTestId("session-resume-status")).toBeNull());
+      await waitFor(() => expect(screen.queryByTestId("session-history-status")).toBeNull());
       expect(screen.getByTestId("runtime-fallback-banner")).toBeInTheDocument();
     });
   });
@@ -3435,12 +3527,12 @@ describe("AgentWorkspaceSessionsPage", () => {
       now: () => "2026-07-02T10:00:10.000Z",
     });
     let releaseResume: (() => void) | null = null;
-    // resumeSession snapshots the Session state when the RPC starts (the way
+    // loadSession snapshots the Session state when the RPC starts (the way
     // the Gateway snapshot predates later events) and stays parked until the
     // test releases it.
     const resumingBridge = {
       ...bridge,
-      async resumeSession(input: { piSessionId: string }) {
+      async loadSession(input: { piSessionId: string }) {
         const snapshot = await bridge.getSessionState(input.piSessionId);
 
         await new Promise<void>((resolve) => {

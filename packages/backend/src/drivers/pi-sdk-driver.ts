@@ -293,6 +293,7 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
   };
 
   return {
+    hasSession: piSessionId => runtimes.has(piSessionId),
     async createSession(input) {
       return trackCreation(async () => {
         if (!options.runtimeFactory) {
