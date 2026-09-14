@@ -87,17 +87,23 @@ flowchart TB
     svc["service.ts — composition root<br/>RPC dispatch + event fan-out"]
     subgraph PL["the one event pipeline"]
       direction LR
-      pi["Pi runtime — embedded<br/>AgentSession · tools · extensions<br/>(the agent loop lives here)"]
-      drv["Driver<br/>pi-sdk default · pi-rpc frozen"]
-      nz["Normalizer<br/>raw events → AgentRuntimeEvent"]
+      drv["SessionProcessDriver<br/>one process per root Session"]
       gw["Runtime Gateway<br/>seq + deterministic run/turn/message ids<br/>+ capability advertisement"]
-      pi --> drv --> nz --> gw
+      drv --> gw
     end
     ws["workspace<br/>sessions · execution checkouts · resources<br/>preflight · provider auth · terminal pty"]
     svc --- gw
     svc --- ws
     gw -. "commands: prompt · queue · steer · stop · model" .-> drv
   end
+
+  subgraph W["Root Session process — bundled Node"]
+    pi["Pi SDK · tools · extensions<br/>plugins own their subagents"]
+    nz["Normalizer<br/>raw events → AgentRuntimeEvent"]
+    pi --> nz
+  end
+  drv -. "SDK driver commands" .-> pi
+  nz -->|"IPC events"| drv
 
   R <-->|"contextBridge"| S
   S <-->|"MessageChannel port"| B
@@ -107,7 +113,7 @@ flowchart TB
   pi -->|"owns"| pilog[("Pi session jsonl<br/>~/.pi — context truth")]
 ```
 
-- **Driver**: wraps the underlying Pi runtime. The SDK driver is the default and main path; the RPC driver is kept but archived and frozen ([ADR-0018](docs/adr/0018-runtime-gateway-api-and-pi-drivers.md)).
+- **Driver**: `SessionProcessDriver` gives every root Session its own process and working directory. Each process hosts the existing Pi SDK driver; plugins own their child Sessions. The CLI RPC driver remains frozen ([ADR-0040](docs/adr/0040-root-session-process-isolation.md)).
 
 - **Normalizer**: converts the raw events Pi emits into a unified `AgentRuntimeEvent`, attaching a phase, a target surface and globally deterministic message ids ([ADR-0020](docs/adr/0020-agent-runtime-event-model.md)). The recorded fixture contract tests are the executable spec of this protocol.
 
@@ -127,9 +133,9 @@ flowchart TB
 
 4. The Gateway assigns a globally deterministic user message id and forwards the command to the active driver (`packages/backend/src/gateway/runtime-gateway.ts`).
 
-5. The SDK driver calls into Pi's `AgentSession`, which runs the core agent loop (`packages/backend/src/drivers/pi-sdk-driver.ts`).
+5. The process driver forwards the command to that Session's worker, where the SDK driver calls Pi's `AgentSession` (`packages/backend/src/drivers/session-process-driver.ts`, `pi-sdk-driver.ts`).
 
-6. The raw events Pi emits are converted into the standard format by the Normalizer (`packages/backend/src/gateway/agent-runtime-event-normalizer.ts`).
+6. The worker's Normalizer converts Pi events into the standard format and sends them back over IPC (`packages/backend/src/gateway/agent-runtime-event-normalizer.ts`).
 
 7. The Gateway stamps each event with a monotonically increasing sequence number, records lifecycle boundaries and updates the projection (`packages/backend/src/persistence/`).
 

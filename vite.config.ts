@@ -21,7 +21,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    exclude: [...configDefaults.exclude, "e2e/**", "**/out/**"],
+    exclude: [...configDefaults.exclude, "e2e/**", "**/out/**", "**/.claude/worktrees/**"],
     pool: "forks",
     // @lobehub/icons ships extensionless directory imports that Node's ESM
     // resolver rejects; let Vite resolve them so pages using brand icons stay

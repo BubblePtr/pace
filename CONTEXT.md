@@ -177,11 +177,11 @@ _Avoid_: AI Gateway, Pi SDK API, Pi RPC protocol, renderer bridge
 _Avoid_: Runtime, agent, workspace
 
 **Agent Run**:
-Agent Workspace 中一次可运行、可停止、可观察的 Pi Runtime 实例。一个 workspace 可以同时拥有多个 Agent Run；每个 Agent Run 对应独立 Pi session 状态和 Session Trajectory；进程是宿主承载方式，多个实例可以共享 Electron 后端。它是 runtime 实例语义，不是一次 agent loop 执行；后者叫 Active Run。
+Agent Workspace 中一次可运行、可停止、可观察的 Pi Runtime 实例。一个 workspace 可以同时拥有多个 Agent Run；每个 Agent Run 对应独立 Pi session 状态和 Session Trajectory；每个根 Session 的运行环境彼此隔离。它是 runtime 实例语义，不是一次 agent loop 执行；后者叫 Active Run。
 _Avoid_: Workspace, model, task label, active run, agent loop run
 
 **Subagent**:
-由插件在根 Session 下创建和管理的子代理。它有独立的 Pi 子会话、模型与 Session Trajectory，通过根 Session ID、代理 ID、父代理 ID 和触发工具调用建立关系；嵌套和 Workflow 所属代理同样可观察。后台子代理可在父 Active Run 完成后继续执行，切换视图不会停止它；根会话停止、删除及宿主正常退出会取消并等待其任务收束。它不是侧栏中的另一条根 Session，也不意味着独立操作系统进程。
+由插件在根 Session 下创建和管理的子代理。主 Agent 通过插件工具委派、继续或取消任务，插件负责子会话的创建、运行、保留复用和释放。后台子代理可以在父 Active Run 完成后继续执行；任务完成不等于子会话销毁。用户主要通过主 Session 获取结果，不要求把每个子代理作为单独管理或观测的对象。它不是侧栏中的另一条根 Session，也不意味着独立操作系统进程。
 _Avoid_: fork, detached process, Active Run
 
 **Active Run**:

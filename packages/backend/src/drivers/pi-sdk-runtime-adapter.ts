@@ -165,8 +165,6 @@ export type PublicPiSdkRuntimeFactoryOptions = {
   now?: () => string;
   sessionOptions?: Omit<PublicPiSdkCreateAgentSessionOptions, "cwd">;
   sessionOptionsFor?(input: CreateRuntimeSessionInput): Promise<Partial<PublicPiSdkCreateAgentSessionOptions>>;
-  prepareObservation?(piSessionId: string): Promise<void>;
-  stopChildren?(piSessionId: string): Promise<void>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -479,25 +477,12 @@ async function configureSessionModel(
 
 function summaryFromSession(session: PublicPiSdkAgentSession) {
   const stats = session.getSessionStats?.();
-  // Pi aggregates usage reported by tools, including child sessions. Keep
-  // each session's own model and compaction spend so the tree can be summed.
-  const entries = session.sessionManager?.getEntries?.();
-  let ownTokens = 0;
-  let ownCost = 0;
-  for (const entry of entries ?? []) {
-    if (!isRecord(entry)) continue;
-    const message = isRecord(entry.message) ? entry.message : undefined;
-    const usage = entry.type === "message" && message?.role === "assistant" ? message.usage
-      : entry.type === "compaction" || entry.type === "branch_summary" ? entry.usage : undefined;
-    if (!isRecord(usage)) continue;
-    ownTokens += maybeNumber(usage.totalTokens) ?? [usage.input, usage.output, usage.cacheRead, usage.cacheWrite].reduce<number>((sum, n) => sum + (maybeNumber(n) ?? 0), 0);
-    ownCost += isRecord(usage.cost) ? maybeNumber(usage.cost.total) ?? 0 : 0;
-  }
+  // Pi owns accounting, including any usage its tools choose to report.
   const summary = {
     provider: modelProvider(session.model),
     model: modelId(session.model),
-    totalTokens: entries ? ownTokens : maybeNumber(stats?.tokens?.total) ?? 0,
-    totalCostUsd: entries ? ownCost : maybeNumber(stats?.cost) ?? 0,
+    totalTokens: maybeNumber(stats?.tokens?.total) ?? 0,
+    totalCostUsd: maybeNumber(stats?.cost) ?? 0,
   };
 
   if (
@@ -595,7 +580,6 @@ export function createPublicPiSdkRuntimeFactory(
     createPublicPiSdkRuntime({
       input,
       now,
-      host: options,
       ...(await options.sdk.createAgentSession({
         ...options.sessionOptions,
         ...await options.sessionOptionsFor?.(input),
@@ -635,7 +619,6 @@ export function createPublicPiSdkRuntimeResumer(
       now,
       session,
       extensionsResult,
-      host: options,
     });
   };
 }
@@ -692,7 +675,6 @@ export function createPublicPiSdkRuntimeForker(
         now: options.now ?? (() => new Date().toISOString()),
         session,
         extensionsResult,
-        host: options,
       }),
       selectedText,
     };
@@ -711,7 +693,6 @@ async function createPublicPiSdkRuntime(context: {
   now: () => string;
   session: PublicPiSdkAgentSession;
   extensionsResult?: { errors: Array<{ path: string; error: string }> };
-  host?: PublicPiSdkRuntimeFactoryOptions;
 }): Promise<PiSdkSessionRuntime> {
     const { session } = context;
     const now = context.now;
@@ -826,7 +807,7 @@ async function createPublicPiSdkRuntime(context: {
         promptCompleted = true;
       },
       async stopRun() {
-        await Promise.all([context.host?.stopChildren?.(session.sessionId), session.abort()]);
+        await session.abort();
         stopped = true;
       },
       async getSnapshot() {
@@ -866,12 +847,12 @@ async function createPublicPiSdkRuntime(context: {
           pendingEvents.length = 0;
           session.dispose();
         };
-        if (!session.extensionRunner && !session.isStreaming && !context.host?.stopChildren) {
+        if (!session.extensionRunner && !session.isStreaming) {
           release();
           return;
         }
         disposal = (async () => {
-          await Promise.all([context.host?.stopChildren?.(session.sessionId), session.abort()]);
+          await session.abort();
           let timer: ReturnType<typeof setTimeout> | undefined;
           try {
             if (session.extensionRunner) await Promise.race([
@@ -1009,7 +990,6 @@ async function createPublicPiSdkRuntime(context: {
         },
       });
     try {
-      await context.host?.prepareObservation?.(session.sessionId);
       for (const error of context.extensionsResult?.errors ?? []) {
         reportExtensionError("extension_load_error", error.path, error.error);
       }

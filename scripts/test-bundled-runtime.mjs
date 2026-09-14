@@ -29,6 +29,8 @@ test("the shipped backend works without global pi or repository node_modules", a
     await cp(join(repo, "apps/desktop/package.json"), join(appDir, "package.json"));
     await mkdir(join(agentDir, "extensions"), { recursive: true });
     await mkdir(cwd);
+    const secondCwd = join(root, "second-project");
+    await mkdir(secondCwd);
     await writeFile(join(agentDir, "auth.json"), JSON.stringify({
       openai: { type: "api_key", key: "bundled-runtime-test-placeholder" },
     }));
@@ -39,9 +41,15 @@ test("the shipped backend works without global pi or repository node_modules", a
       import { writeFileSync } from "node:fs";
       import { join } from "node:path";
       export default function(pi) {
+        const key = Symbol.for("pace.bundle-process-probe");
+        globalThis[key] = (globalThis[key] ?? 0) + 1;
         pi.registerTool({ name: "bundle_probe", label: "Probe", description: "Bundled extension probe",
           parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
-        pi.on("session_start", async (_event, ctx) => { writeFileSync(join(ctx.cwd, "started.txt"), "ready"); });
+        pi.on("session_start", async (_event, ctx) => {
+          writeFileSync(join(ctx.cwd, "started.txt"), "ready");
+          writeFileSync(join(ctx.cwd, "process.json"), JSON.stringify({ pid: process.pid, cwd: process.cwd(), starts: globalThis[key] }));
+        });
+        pi.on("session_shutdown", async (_event, ctx) => { writeFileSync(join(ctx.cwd, "closed.txt"), "closed"); });
         pi.registerCommand("bundle-probe", { description: "Probe command", handler: async (_args, ctx) => {
           for (const name of ["dark", "light"]) {
             initTheme(name);
@@ -59,9 +67,11 @@ test("the shipped backend works without global pi or repository node_modules", a
       const pending = new Map();
       const events = [];
       let receive;
+      let control;
       let connected;
       const ready = new Promise(resolve => { connected = resolve; });
       process.parentPort = { on(_name, connect) {
+        control = connect;
         connect({ data: { type: "connect" }, ports: [{
           on(event, handler) { if (event === "message") { receive = handler; connected(); } }, start() {},
           postMessage(message) {
@@ -69,7 +79,7 @@ test("the shipped backend works without global pi or repository node_modules", a
             else { pending.get(message.id)?.(message); pending.delete(message.id); }
           },
         }] });
-      } };
+      }, postMessage() {} };
       await import(pathToFileURL(process.env.PROBE_BACKEND));
       await ready;
       let sequence = 0;
@@ -82,7 +92,11 @@ test("the shipped backend works without global pi or repository node_modules", a
       const tools = piSessionId ? await request("resolve_tool_schemas", { piSessionId, names: ["bundle_probe"] }) : null;
       const prompted = piSessionId ? await request("send_prompt", { piSessionId, prompt: "/bundle-probe" }) : null;
       const snapshot = piSessionId ? await request("get_runtime_snapshot", { piSessionId }) : null;
-      console.log("PROBE_RESULT " + JSON.stringify({ preflight, created, tools, prompted, snapshot, events }));
+      const second = await request("create_session", { sessionId: "second", projectId: "second", cwd: process.env.PROBE_SECOND_CWD });
+      const removed = await request("delete_session", { sessionId: "probe" });
+      const survivor = second.result?.piSessionId ? await request("get_runtime_snapshot", { piSessionId: second.result.piSessionId }) : null;
+      await control({ data: { type: "shutdown" } });
+      console.log("PROBE_RESULT " + JSON.stringify({ preflight, created, tools, prompted, snapshot, second, removed, survivor, events }));
     `], {
       cwd,
       env: {
@@ -94,6 +108,7 @@ test("the shipped backend works without global pi or repository node_modules", a
         PROBE_BACKEND: join(appDir, "out/main/backend.js"),
         PI_PACKAGE_DIR: join(appDir, "out/main/pi-assets"),
         PROBE_CWD: cwd,
+        PROBE_SECOND_CWD: secondCwd,
       },
       timeout: 30_000,
       maxBuffer: 2 * 1024 * 1024,
@@ -101,6 +116,16 @@ test("the shipped backend works without global pi or repository node_modules", a
     const result = JSON.parse(stdout.split("\n").find(line => line.startsWith("PROBE_RESULT ")).slice(13));
     if (stderr) console.error(stderr);
     assert.equal(result.created.error, undefined);
+    assert.equal(result.second.error, undefined);
+    assert.equal(result.removed.error, undefined);
+    assert.equal(result.survivor.error, undefined);
+    const firstProcess = JSON.parse(await readFile(join(cwd, "process.json"), "utf8"));
+    const secondProcess = JSON.parse(await readFile(join(secondCwd, "process.json"), "utf8"));
+    assert.notEqual(firstProcess.pid, secondProcess.pid, "root Sessions must have separate processes");
+    assert.equal(firstProcess.starts, 1, "plugin globals must belong to one root Session");
+    assert.equal(secondProcess.starts, 1);
+    assert.equal(await readFile(join(cwd, "closed.txt"), "utf8"), "closed");
+    assert.equal(await readFile(join(secondCwd, "closed.txt"), "utf8"), "closed");
     assert.ok(result.created.result.events.some(event => event.payload.code === "extension_load_error"), "startup errors must be in the first snapshot");
     assert.ok(result.tools?.result?.schemas?.bundle_probe, "the extension must resolve bundled peer modules");
     assert.equal(await readFile(join(cwd, "started.txt"), "utf8"), "ready", "session_start must run");

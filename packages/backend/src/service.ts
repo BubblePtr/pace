@@ -1,4 +1,3 @@
-import { createSubagentObserver } from "./drivers/subagent-observer";
 import { createGitMetadataWatchers } from "./workspace/git-metadata-watcher";
 import { CHAT_PROJECT_ID } from "@pace/core";
 import { createWorkspaceInvalidation } from "./workspace/workspace-invalidation";
@@ -220,24 +219,16 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     createFileSessionEventJournal({
       dataDir,
     });
-  const subagents = createSubagentObserver({
-    journal: runtimeJournal,
-    publish: event => runtimeGateway.publish(event),
-    advanceSequence: events => runtimeGateway.advanceSequence(events),
-  });
   const sdkOptions = {
     sdk: piSdk,
     async sessionOptionsFor(input: { sessionId: string; cwd: string }) {
       const settingsManager = piSdk.SettingsManager.create(input.cwd, agentDir);
       const resourceLoader = new piSdk.DefaultResourceLoader({
         cwd: input.cwd, agentDir, settingsManager,
-        extensionFactories: [subagents.extension(input.sessionId)],
       });
       await resourceLoader.reload();
       return { agentDir, settingsManager, resourceLoader };
     },
-    prepareObservation: subagents.prepare,
-    stopChildren: subagents.stop,
   };
   const runtimeDriver = options.runtimeDriver ?? createPiSdkDriver({
     runtimeFactory: createPublicPiSdkRuntimeFactory(sdkOptions),
@@ -246,7 +237,6 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   });
   const runtimeGateway = createRuntimeGatewayService({
     driver: runtimeDriver,
-    subagents,
     projections: sessionProjectionStore,
     journal: runtimeJournal,
     dataDir,
@@ -293,14 +283,16 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
     dispose() {
       closing = true;
       disposal ??= (async () => {
-        await runtimeDriver.dispose?.();
-        await subagents.dispose();
-        await runtimeGateway.flush();
-        await runtimeJournal.flush?.();
-        terminalManager.disposeAll();
-        gitWatchers.dispose();
-        invalidation.dispose();
-        listeners.clear();
+        try {
+          await runtimeDriver.dispose?.();
+        } finally {
+          await runtimeGateway.flush();
+          await runtimeJournal.flush?.();
+          terminalManager.disposeAll();
+          gitWatchers.dispose();
+          invalidation.dispose();
+          listeners.clear();
+        }
       })().catch(error => { disposal = undefined; throw error; });
       return disposal;
     },
@@ -777,10 +769,6 @@ function isRuntimeGatewayMethod(method: string) {
     method === "archive_session" ||
     method === "rename_session" ||
     method === "delete_session" ||
-    method === "get_subagents" ||
-    method === "get_subagent_snapshot" ||
-    method === "stop_subagent" ||
-    method === "steer_subagent" ||
     method === "get_runtime_snapshot"
   );
 }

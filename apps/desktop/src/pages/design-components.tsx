@@ -256,7 +256,7 @@ function SessionDockGallery() {
           <div className="h-72 w-[30rem] overflow-hidden rounded-md border border-separator">
             <SessionDock
               activeSurfaceId={activeSurfaceId}
-              badges={{ changes: "3", subagents: "2" }}
+              badges={{ changes: "3" }}
               onActiveSurfaceChange={setActiveSurfaceId}
             >
               <SessionSurfaceBar
@@ -271,10 +271,8 @@ function SessionDockGallery() {
                 }
               >
                 <p className="text-xs text-muted">
-                  {activeSurfaceId === "subagents" ? "2 active · 4 subagents" : <>
-                    3 files · <span className="text-success">+18</span>{" "}
-                    <span className="text-danger">-4</span>
-                  </>}
+                  3 files · <span className="text-success">+18</span>{" "}
+                  <span className="text-danger">-4</span>
                 </p>
               </SessionSurfaceBar>
               <p className="px-2 text-sm text-muted">
@@ -2316,7 +2314,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "ChatTool", category: "Reasoning & tools", description: "A tool call from input streaming through success or error.", Preview: ChatToolGallery },
   { name: "ChatToolGroup", category: "Reasoning & tools", description: "Single and grouped tool calls with compact summaries.", Preview: ChatToolGroupGallery },
   { name: "ChatStatusLine", category: "Reasoning & tools", description: "Current thinking or acting phase with elapsed time.", Preview: ChatStatusLineGallery },
-  { name: "SessionDock", category: "Workspace & trajectory", description: "Switch between changes, files, terminal, browser, and subagent observation surfaces.", Preview: SessionDockGallery },
+  { name: "SessionDock", category: "Workspace & trajectory", description: "Switch between changes, files, terminal, and browser surfaces.", Preview: SessionDockGallery },
   { name: "BrowserSurface", category: "Workspace & trajectory", description: "Browser chrome, annotations, snapshots, and unavailable states.", Preview: BrowserSurfaceGallery },
   { name: "TerminalView", category: "Workspace & trajectory", description: "Interactive terminal display with sample shell output.", Preview: TerminalViewGallery },
   { name: "PiTrajectoryLedger", category: "Workspace & trajectory", description: "Run and turn records with execution status and focus.", Preview: PiTrajectoryLedgerGallery },

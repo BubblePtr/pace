@@ -80,3 +80,6 @@ ADR-0021 中“不导入 CLI/TUI 会话”保留为当前实现范围，不作�
 - [Pi SDK 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)
 - [Pi 扩展文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
 - 当前实现依据：[后端依赖](../../packages/backend/package.json)、[组合根](../../packages/backend/src/service.ts)、[构建配置](../../apps/desktop/electron.vite.config.ts)、[打包配置](../../electron-builder.yml)、[环境预检](../../packages/backend/src/workspace/environment-preflight.ts)。版本与实现现状为 2026-09-05 核查结果，后续以代码和 lockfile 为准。
+
+
+2026-09-14：根会话承载改为独立进程，原版插件自行管理子代理，撤销专用宿主观测协议；此处后续以 [ADR-0040](0040-root-session-process-isolation.md) 为准。SDK 仍随应用打包，不恢复系统 Node 探测或独立 SDK 包分发。
