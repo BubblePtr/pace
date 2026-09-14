@@ -78,6 +78,8 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 
 ## 维护规则
 
+- **2026-09-14 历史与执行解耦（#304）**：历史读取及首次发送等待复用 TextShimmer、ChatPromptInput 的已有状态，冷会话模型目录复用 ModelSelectorControl；只调整页面组合，未新增共享组件或变体，无需新增 Design 条目。规则见 [对话与 Composer](design/chat.md)。
+
 - **Trajectory 列表精简**：移除页面级重复标题、说明与列表上下渐隐，项目筛选和刷新复用 Astryx `HStack`、`Tokenizer`、`IconButton`；未新增共享原语或 Design 页变体。
 
 - **2026-09-10 Trajectory Run 横栏遮挡修复**：仅调整 `SessionDetailView` 的虚拟项定位，保留 `PiTrajectoryLedger` 的吸顶与组件契约；未新增自建组件或 Design 页变体。定位约束见 [轨迹使用规则](design/workspace.md#轨迹trajectory-cockpit)，浏览器回归覆盖滚动进入、吸顶交接及反向滚动。

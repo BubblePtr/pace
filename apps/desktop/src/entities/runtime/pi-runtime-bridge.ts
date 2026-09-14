@@ -42,6 +42,7 @@ export type ExecutionCheckout = {
 };
 
 export type RuntimeBridgeFailureStage =
+  | "loading history"
   | "starting runtime"
   | "sending prompt"
   | "forking session"
@@ -132,6 +133,7 @@ export type SessionReplayEntry =
   | { kind: "chat"; seq: number; event: PiRuntimeEvent };
 
 export type PiSessionState = {
+  executionState?: "cold" | "ready";
   sessionName?: string;
   piSessionId: string;
   runtimeId: string;
@@ -153,6 +155,7 @@ export type PiRuntimeAcceptedPrompt = {
   accepted: true;
   piSessionId: string;
   event: PiRuntimeEvent;
+  state?: PiSessionState;
 };
 
 export type StartRuntimeInput = {
@@ -241,6 +244,7 @@ export type PiRuntimeBridge = {
   abortRun(input: AbortRunInput): Promise<PiRuntimeEvent>;
   configureModel?(input: ConfigureModelInput): Promise<RuntimeModelControls>;
   getSessionState(piSessionId: string): Promise<PiSessionState>;
+  loadSession?(input: { sessionId: string; piSessionId: string }): Promise<PiSessionState>;
   resumeSession?(input: ResumeSessionInput): Promise<PiSessionState>;
   forkSession?(input: ForkSessionInput): Promise<ForkSessionResult>;
   prepareChatWorkspace?(input: { sessionId: string }): Promise<{ cwd: string }>;

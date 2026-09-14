@@ -571,13 +571,17 @@ export function sessionStatusFromRuntimeModel(
     return null;
   }
 
+  // Only the latest root run determines whether this Session is executing.
+  // Interrupted or failed history must not keep a resumed run active/failed.
   const runs = [...model.runs.values()];
+  const run = runs[runs.length - 1]!;
 
-  if (model.errors.some((error) => error.fatal !== false) || runs.some((run) => run.outcome === "failed")) {
+  if (run.outcome === "failed" || model.errors.some(error => error.fatal !== false &&
+    (error.runId ? error.runId === run.runId : error.at >= run.startedAt))) {
     return "failed";
   }
 
-  if (runs.some((run) => !run.endedAt)) {
+  if (!run.endedAt) {
     return "running";
   }
 

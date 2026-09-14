@@ -654,6 +654,24 @@ function FullChatComposer({
   // Read once per mount: Settings owns this set and the composer only remounts
   // after leaving that page (issue #102).
   const [visibleModels] = useState(getVisibleModels);
+  const [availableModels, setAvailableModels] = useState<RuntimeModelControls["models"]>([]);
+  const needsModelCatalog = Boolean(projection?.piSessionId && !projection.modelControls?.models.length);
+  const composerModelControls = projection?.modelControls?.models.length
+    ? projection.modelControls
+    : availableModels.length
+      ? { models: availableModels, selected: projection?.modelControls?.selected ?? null }
+      : projection?.modelControls;
+
+  useEffect(() => {
+    if (!needsModelCatalog) return;
+    let cancelled = false;
+    void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
+      if (!cancelled) setAvailableModels(controls.models);
+    }).catch(() => {
+      // An unavailable catalog must not prevent reading history or sending a prompt.
+    });
+    return () => { cancelled = true; };
+  }, [needsModelCatalog, sessionId]);
   const [draft, setDraft] = useState(() =>
     sessionId ? getFollowUpDraft(sessionId)?.message ?? "" : "",
   );
@@ -662,6 +680,8 @@ function FullChatComposer({
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   // Shelf drawer + footer Add-to-prompt menu. Images ride send_prompt /
   // queue_follow_up / steer_run. Decision: .scratch/composer-attachments/PRD.md
   const attachments = useComposerAttachments();
@@ -676,7 +696,7 @@ function FullChatComposer({
       !providedSessionChanges && Boolean(sessionId && projection?.piSessionId) &&
       !isChatProjectId(projection?.projectId ?? ""),
   });
-  const promptStatus = isStoppingRun || isCreating
+  const promptStatus = isStoppingRun || isCreating || isSubmitting
     ? "submitted"
     : queueMode
       ? "streaming"
@@ -741,33 +761,41 @@ function FullChatComposer({
   }, [attachments.addFiles, sessionId]);
 
   const submitDraft = async () => {
-    const built = await buildPromptWithAttachments(draft, attachments.items);
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const built = await buildPromptWithAttachments(draft, attachments.items);
 
-    if (!built.ok) {
-      setComposerError(built.error);
-      return;
-    }
+      if (!built.ok) {
+        setComposerError(built.error);
+        return;
+      }
 
-    if (queueMode) {
+      if (queueMode) {
+        try {
+          await onQueueSubmit?.(built.prompt, built.images);
+          setComposerError(null);
+          attachments.clear();
+          clearSubmittedDraft();
+        } catch (error) {
+          setComposerError(errorMessage(error));
+        }
+
+        return;
+      }
+
       try {
-        await onQueueSubmit?.(built.prompt, built.images);
+        await onPromptSubmit?.(built.prompt, built.images);
         setComposerError(null);
         attachments.clear();
         clearSubmittedDraft();
       } catch (error) {
         setComposerError(errorMessage(error));
       }
-
-      return;
-    }
-
-    try {
-      await onPromptSubmit?.(built.prompt, built.images);
-      setComposerError(null);
-      attachments.clear();
-      clearSubmittedDraft();
-    } catch (error) {
-      setComposerError(errorMessage(error));
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
     }
   };
   // Queue-first model: the composer always queues while a run is active, and
@@ -851,7 +879,7 @@ function FullChatComposer({
         />
       ) : null}
       <PromptInput
-        allowSubmitWhileRunning={queueMode}
+        allowSubmitWhileRunning={queueMode && !isSubmitting}
         className="mx-auto w-full max-w-[44rem]"
         drawer={
           <ComposerAttachmentDrawer
@@ -862,7 +890,7 @@ function FullChatComposer({
         error={attachments.error ?? composerError}
         footer={composerFooter}
         hasAttachments={attachments.items.length > 0}
-        lockInputOnRun={!queueMode}
+        lockInputOnRun={!queueMode || isSubmitting}
         startActions={
           <>
             {picker.input}
@@ -872,10 +900,10 @@ function FullChatComposer({
               onAttach={picker.open}
               onInsert={(text) => updateDraft(insertIntoDraft(draft, text))}
             />
-            {projection?.modelControls && onModelConfigChange ? (
+            {composerModelControls && onModelConfigChange ? (
               <ModelSelectorControl
-                controls={projection.modelControls}
-                isDisabled={queueMode}
+                controls={composerModelControls}
+                isDisabled={queueMode || isSubmitting}
                 visibleModels={visibleModels}
                 onChange={onModelConfigChange}
                 onManageModels={onManageModels}
@@ -897,6 +925,11 @@ function FullChatComposer({
         onSubmit={submitDraft}
         onValueChange={updateDraft}
       />
+      {isSubmitting ? (
+        <p role="status" aria-live="polite" className="text-sm text-muted">
+          <TextShimmer>Sending message…</TextShimmer>
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -2638,10 +2671,10 @@ function messageFromError(error: unknown) {
     : "Pi could not stop the active run.";
 }
 
-function runtimeResumeErrorMessage(error: unknown) {
+function historyLoadErrorMessage(error: unknown) {
   return error instanceof Error
     ? error.message
-    : "Pi could not resume the session runtime.";
+    : "Pace could not load session history.";
 }
 
 async function restoreProjectionRuntimeState(input: {
@@ -2760,14 +2793,13 @@ function LiveSessionColumn({
   const columnRef = useRef<HTMLElement | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
-  const resumeAttemptedKeysRef = useRef(new Set<string>());
-  const pendingResumeRequestsRef = useRef(new Map<string, Promise<PiSessionState>>());
-  const resumeFailedKeysRef = useRef(new Set<string>());
-  const [resumeRetryNonce, setResumeRetryNonce] = useState(0);
-  // Resume key of the in-flight resume RPC. A cold-opened Session has no
-  // runtime events until the snapshot lands, so without this the Live Chat is
-  // blank for the whole round-trip and reads as frozen.
-  const [pendingResumeKey, setPendingResumeKey] = useState<string | null>(null);
+  const historyLoadedKeysRef = useRef(new Set<string>());
+  const viewedHistoryKeyRef = useRef<string | null>(null);
+  const pendingHistoryRequestsRef = useRef(new Map<string, Promise<PiSessionState>>());
+  const historyFailedKeysRef = useRef(new Set<string>());
+  const [historyRetryNonce, setHistoryRetryNonce] = useState(0);
+  // A pending history read is independent of execution preparation.
+  const [pendingHistoryKey, setPendingHistoryKey] = useState<string | null>(null);
 
   useEffect(
     () =>
@@ -2873,73 +2905,71 @@ function LiveSessionColumn({
     showDraft,
   ]);
 
-  const resumeKeyForProjection = (
+  const historyKeyForProjection = (
     projection: SessionProjection,
     retryNonce: number,
   ) =>
-    projection.piSessionId && projection.sessionFile
+    projection.piSessionId
       ? `${projection.id}\u0000${projection.piSessionId}\u0000${projection.sessionFile}\u0000${runtimeGeneration}\u0000${retryNonce}`
       : null;
 
   useEffect(() => {
     if (
       showDraft ||
-      !sessionProjection?.piSessionId ||
-      !sessionProjection.sessionFile
+      !sessionProjection?.piSessionId
     ) {
+      viewedHistoryKeyRef.current = null;
       return;
     }
 
     const bridge = getRuntimeBridge();
 
-    if (!bridge.resumeSession) {
+    if (!bridge.loadSession) {
       return;
     }
 
-    const resumeKey = resumeKeyForProjection(
+    const historyKey = historyKeyForProjection(
       sessionProjection,
-      resumeRetryNonce,
+      historyRetryNonce,
     );
 
-    if (!resumeKey || resumeFailedKeysRef.current.has(resumeKey)) {
+    if (viewedHistoryKeyRef.current !== historyKey) {
+      if (historyKey) historyLoadedKeysRef.current.delete(historyKey);
+      viewedHistoryKeyRef.current = historyKey;
+    }
+
+    if (!historyKey || historyFailedKeysRef.current.has(historyKey)) {
       return;
     }
 
-    if (resumeAttemptedKeysRef.current.has(resumeKey)) {
+    if (historyLoadedKeysRef.current.has(historyKey)) {
       return;
     }
 
     let cancelled = false;
-    let request = pendingResumeRequestsRef.current.get(resumeKey);
+    let request = pendingHistoryRequestsRef.current.get(historyKey);
     if (!request) {
-      request = bridge.resumeSession({
+      request = bridge.loadSession({
         sessionId: sessionProjection.id,
-        projectId: sessionProjection.projectId,
         piSessionId: sessionProjection.piSessionId,
-        cwd:
-          sessionProjection.checkout?.runtimeCwd ??
-          sessionProjection.cwd ??
-          workspace.checkout.runtimeCwd,
-        sessionFile: sessionProjection.sessionFile,
-        checkout: sessionProjection.checkout,
       });
-      pendingResumeRequestsRef.current.set(resumeKey, request);
+      pendingHistoryRequestsRef.current.set(historyKey, request);
     }
-    setPendingResumeKey(resumeKey);
+    setPendingHistoryKey(historyKey);
 
     // Projection refreshes cancel the old effect, but the current view must
-    // still receive its pending resume without starting a second runtime.
+    // still receive its pending history without duplicating the read.
     void request
       .then((state) => {
         if (cancelled) {
           return;
         }
 
-        resumeAttemptedKeysRef.current.add(resumeKey);
-        resumeFailedKeysRef.current.delete(resumeKey);
+        historyLoadedKeysRef.current.add(historyKey);
+        historyFailedKeysRef.current.delete(historyKey);
 
         // Re-base on the freshest projection: prompt/queue handlers may have
-        // committed echoes while the resume RPC was in flight, and resync
+        // committed echoes while the history RPC was in flight, and resync
         // replaces runtimeEvents wholesale from a snapshot that predates
         // them. Fall back to the prop when the view switched Sessions.
         const latest = liveProjectionRef.current ?? sessionProjection;
@@ -2955,7 +2985,9 @@ function LiveSessionColumn({
           state.events.map((snapshotEvent) => snapshotEvent.id),
         );
 
-        for (const event of base.runtimeEvents) {
+        // Gateway reads already merge concurrent events in sequence. Only
+        // legacy bridges need to retain echoes absent from their snapshots.
+        for (const event of state.replay ? [] : base.runtimeEvents) {
           if (!snapshotEventIds.has(event.id)) {
             next = applySessionProjectionEvent(next, {
               type: "runtime-event-received",
@@ -2971,19 +3003,19 @@ function LiveSessionColumn({
           return;
         }
 
-        resumeAttemptedKeysRef.current.delete(resumeKey);
-        resumeFailedKeysRef.current.add(resumeKey);
+        historyLoadedKeysRef.current.delete(historyKey);
+        historyFailedKeysRef.current.add(historyKey);
         commitInteractionProjection(
           applySessionProjectionEvent(sessionProjection, {
             type: "projection-marked-stale",
-            reason: runtimeResumeErrorMessage(error),
+            reason: historyLoadErrorMessage(error),
             occurredAt: new Date().toISOString(),
           }),
         );
       })
       .finally(() => {
-        pendingResumeRequestsRef.current.delete(resumeKey);
-        setPendingResumeKey((current) => (current === resumeKey ? null : current));
+        pendingHistoryRequestsRef.current.delete(historyKey);
+        setPendingHistoryKey((current) => (current === historyKey ? null : current));
       });
 
     return () => {
@@ -2992,7 +3024,7 @@ function LiveSessionColumn({
   }, [
     getRuntimeBridge,
     runtimeGeneration,
-    resumeRetryNonce,
+    historyRetryNonce,
     sessionProjection,
     showDraft,
     workspace.checkout.runtimeCwd,
@@ -3171,29 +3203,28 @@ function LiveSessionColumn({
     };
   }, [getRuntimeBridge, liveProjection?.piSessionId, showDraft]);
 
-  const resumeInFlight =
-    pendingResumeKey !== null &&
+  const historyInFlight =
+    pendingHistoryKey !== null &&
     Boolean(sessionProjection) &&
     sessionProjection != null &&
-    resumeKeyForProjection(sessionProjection, resumeRetryNonce) === pendingResumeKey;
-  const canRetryRuntimeResume = Boolean(
+    historyKeyForProjection(sessionProjection, historyRetryNonce) === pendingHistoryKey;
+  const canRetryHistoryLoad = Boolean(
     liveProjection?.piSessionId &&
-      liveProjection.sessionFile &&
-      getRuntimeBridge().resumeSession,
+      getRuntimeBridge().loadSession,
   );
-  const handleRetryRuntimeResume = () => {
+  const handleRetryHistoryLoad = () => {
     if (!liveProjection) {
       return;
     }
 
-    const resumeKey = resumeKeyForProjection(liveProjection, resumeRetryNonce);
+    const historyKey = historyKeyForProjection(liveProjection, historyRetryNonce);
 
-    if (resumeKey) {
-      resumeAttemptedKeysRef.current.delete(resumeKey);
-      resumeFailedKeysRef.current.delete(resumeKey);
+    if (historyKey) {
+      historyLoadedKeysRef.current.delete(historyKey);
+      historyFailedKeysRef.current.delete(historyKey);
     }
 
-    setResumeRetryNonce((currentNonce) => currentNonce + 1);
+    setHistoryRetryNonce((currentNonce) => currentNonce + 1);
   };
   const shouldTickLiveClock =
     clockNowMs === undefined &&
@@ -3295,6 +3326,7 @@ function LiveSessionColumn({
     });
     commitInteractionProjection(next);
   };
+  const pendingPromptsRef = useRef(new Map<string, { content: string; promise: Promise<void> }>());
   const handlePromptSubmit = async (
     message: string,
     images?: RuntimePromptImage[],
@@ -3305,25 +3337,43 @@ function LiveSessionColumn({
       return;
     }
 
-    await restoreProjectionRuntimeState({
-      bridge: getRuntimeBridge(),
-      projection,
-      workspace,
-    });
+    const piSessionId = projection.piSessionId;
+    const content = JSON.stringify({ message, images });
+    const pending = pendingPromptsRef.current.get(projection.piSessionId);
+    if (pending) {
+      if (pending.content !== content) throw new Error("Wait for the pending message before sending another.");
+      return pending.promise;
+    }
+    const sending = (async () => {
+      await restoreProjectionRuntimeState({
+        bridge: getRuntimeBridge(),
+        projection,
+        workspace,
+      });
 
-    const submittedAt = new Date().toISOString();
-    const accepted = await getRuntimeBridge().sendInitialPrompt({
-      piSessionId: projection.piSessionId,
-      prompt: message,
-      ...(images?.length ? { images } : {}),
-    });
+      const submittedAt = new Date().toISOString();
+      const accepted = await getRuntimeBridge().sendInitialPrompt({
+        piSessionId,
+        prompt: message,
+        ...(images?.length ? { images } : {}),
+      });
 
-    const next = applySessionProjectionEvent(latestProjectionFor(projection), {
-      type: "runtime-event-received",
-      submittedAt,
-      event: accepted.event,
-    });
-    commitInteractionProjection(next);
+      const current = accepted.state
+        ? applySessionProjectionEvent(latestProjectionFor(projection), { type: "runtime-state-resynced", state: accepted.state })
+        : latestProjectionFor(projection);
+      const next = applySessionProjectionEvent(current, {
+        type: "runtime-event-received",
+        submittedAt,
+        event: accepted.event,
+      });
+      commitInteractionProjection(next);
+    })();
+    pendingPromptsRef.current.set(projection.piSessionId, { content, promise: sending });
+    try {
+      await sending;
+    } finally {
+      pendingPromptsRef.current.delete(projection.piSessionId);
+    }
   };
   const modelChangeInFlight = useRef<Promise<void> | null>(null);
   const lastMessage = liveMessages[liveMessages.length - 1];
@@ -3649,12 +3699,12 @@ function LiveSessionColumn({
                 {runtimeUnavailableProjection.staleReason ??
                   "Showing read-only session data."}
               </span>
-              {canRetryRuntimeResume ? (
+              {canRetryHistoryLoad ? (
                 <Button
                   label="Retry"
                   size="sm"
                   variant="secondary"
-                  onClick={handleRetryRuntimeResume}
+                  onClick={handleRetryHistoryLoad}
                 />
               ) : null}
             </div>
@@ -3699,14 +3749,14 @@ function LiveSessionColumn({
                   }
                 />
               ))}
-              {resumeInFlight ? (
+              {historyInFlight ? (
                 <p
                   aria-live="polite"
                   className="text-sm text-muted"
-                  data-testid="session-resume-status"
+                  data-testid="session-history-status"
                   role="status"
                 >
-                  <TextShimmer>Resuming session…</TextShimmer>
+                  <TextShimmer>Loading history…</TextShimmer>
                 </p>
               ) : null}
               {creating && liveProjection ? (
@@ -3747,6 +3797,7 @@ function LiveSessionColumn({
           ) : readOnlyProjection ? null : (
             <div className="pigui-draft-handoff__composer mt-auto flex shrink-0 flex-col">
             <FullChatComposer
+              key={liveProjection?.id}
               isCreating={creating}
               isStoppingRun={stoppingRun}
               queueMode={queueMode}

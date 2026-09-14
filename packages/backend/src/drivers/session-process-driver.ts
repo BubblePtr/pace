@@ -166,6 +166,7 @@ export function createSessionProcessDriver(options: SessionProcessDriverOptions)
     return root.process;
   };
   return {
+    hasSession: piSessionId => Boolean(piRoots.get(piSessionId)?.snapshot),
     createSession: async input => launch(input, child => child.call("createSession", [input])),
     async resumeSession(input: ResumeRuntimeSessionInput) {
       const root = piRoots.get(input.piSessionId) ?? roots.get(input.sessionId);

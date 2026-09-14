@@ -7,6 +7,46 @@ import {
 } from "@/entities/runtime/runtime-gateway-client";
 
 describe("Runtime Gateway client", () => {
+  it("refreshes runtime controls after the first cold send without turning a refresh failure into a failed submission", async () => {
+    let reads = 0;
+    const invoke = vi.fn(async <T,>(command: string) => {
+      if (command === "get_runtime_snapshot") {
+        if (++reads > 1) throw new Error("snapshot unavailable");
+        return { sessionId: "app", piSessionId: "pi", runtimeId: "runtime", projectId: "p", cwd: "/repo",
+          executionState: "cold", status: "completed", events: [], updatedAt: "2026-09-14T00:00:00.000Z" } as T;
+      }
+      return { id: "accepted", seq: 1, piSessionId: "pi", sessionId: "app", ts: "2026-09-14T00:01:00.000Z",
+        type: "message_update", payload: { kind: "message", role: "user", body: "Continue" } } as T;
+    });
+    const client = createRuntimeGatewayClient({ invoke: invoke as RuntimeGatewayClientOptions["invoke"], onBackendEvent: () => () => {} });
+    await client.loadSession!({ sessionId: "app", piSessionId: "pi" });
+    await expect(client.sendInitialPrompt({ piSessionId: "pi", prompt: "Continue" })).resolves.toMatchObject({ accepted: true });
+    expect(reads).toBe(2);
+    expect(invoke.mock.calls.filter(([command]) => command === "send_prompt")).toHaveLength(1);
+  });
+
+  it("merges live events received during a history read in sequence without losing earlier history", async () => {
+    let emit!: (event: BackendRpcEvent) => void;
+    let resolve!: (snapshot: RuntimeGatewaySnapshot) => void;
+    const client = createRuntimeGatewayClient({
+      invoke: <T,>() => new Promise<T>(done => { resolve = snapshot => done(snapshot as T); }),
+      onBackendEvent: listener => { emit = listener; return () => {}; },
+    });
+    const event = (seq: number, body: string): RuntimeGatewayEventEnvelope => ({
+      id: `evt-${seq}`, seq, sessionId: "app", piSessionId: "pi", type: "message_update",
+      ts: `2026-09-14T00:00:0${seq}.000Z`, payload: { kind: "message", role: "user", body },
+    });
+    client.subscribeToEvents("pi", () => {});
+    const reading = client.loadSession!({ sessionId: "app", piSessionId: "pi" });
+    emit({ type: "event", event: event(2, "New prompt") });
+    resolve({ sessionId: "app", piSessionId: "pi", runtimeId: "runtime", projectId: "p", cwd: "/repo",
+      executionState: "cold", status: "completed", events: [event(1, "Old prompt")], updatedAt: "2026-09-14T00:00:01.000Z" });
+    const state = await reading;
+    expect(state.events.map(entry => entry.body)).toEqual(["Old prompt", "New prompt"]);
+    expect(state.replay?.map(entry => entry.kind === "chat" ? entry.seq : entry.entry.seq)).toEqual([1, 2]);
+    expect(state.executionState).toBe("ready");
+  });
+
   it("resumes persisted runtime state through the Gateway", async () => {
     const invocations: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const snapshot: RuntimeGatewaySnapshot = {

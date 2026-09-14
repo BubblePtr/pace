@@ -100,6 +100,7 @@ export type ResolveToolSchemasInput = {
 };
 
 export type PiRuntimeDriver = {
+  hasSession?(piSessionId: string): boolean;
   createSession(input: CreateRuntimeSessionInput): Promise<RuntimeGatewaySnapshot>;
   resumeSession(input: ResumeRuntimeSessionInput): Promise<RuntimeGatewaySnapshot>;
   forkSession(input: ForkRuntimeSessionInput): Promise<ForkRuntimeSessionResult>;
@@ -203,6 +204,64 @@ export function createRuntimeGatewayService(
     else emit(event);
   });
 
+  const preparing = new Map<string, Promise<void>>();
+  const dispatch = async (request: RuntimeGatewayRequest) => {
+    let initializingSessionId: string | undefined;
+    try {
+      if (["create_session", "resume_session", "fork_session"].includes(request.method)) {
+        initializingSessionId = requiredString(paramsRecord(request.params).sessionId, "sessionId");
+        initializationEvents.set(initializingSessionId, []);
+      }
+      let result = await dispatchRuntimeGatewayRequest({
+        request,
+        driver: options.driver,
+        flushProjections: () => projectionWrites.flush(),
+        journal: options.journal,
+        projections: options.projections,
+        dataDir,
+        emit,
+        appendJournalEvent,
+        now,
+        recordUserSubmission(piSessionId, submittedAt) {
+          const sessionId = sessionIdsByPiSessionId.get(piSessionId);
+          if (sessionId) projectionWrites.recordUserSubmission(sessionId, submittedAt);
+        },
+        advanceEventSequence(events) {
+          nextEvent.advanceTo(
+            events.reduce((highestSeq, event) => Math.max(highestSeq, event.seq), 0),
+          );
+        },
+        rememberSession(snapshot) {
+          sessionIdsByPiSessionId.set(snapshot.piSessionId, snapshot.sessionId);
+        },
+        resolveSessionId(piSessionId) {
+          return sessionIdsByPiSessionId.get(piSessionId) ?? null;
+        },
+      });
+
+      if (initializingSessionId) {
+        const pending = initializationEvents.get(initializingSessionId) ?? [];
+        initializationEvents.delete(initializingSessionId);
+        // Fork history and the session projection must exist before startup
+        // events are sequenced. Include them in the first response: the
+        // renderer cannot subscribe to a session it has not received yet.
+        const events = pending.map(emit).filter((event): event is RuntimeGatewayEventEnvelope => event !== null);
+        if (events.length > 0) {
+          if (request.method === "fork_session") {
+            const fork = result as ForkRuntimeSessionResult;
+            result = { ...fork, snapshot: { ...fork.snapshot, events: [...fork.snapshot.events, ...events] } };
+          } else {
+            const snapshot = result as RuntimeGatewaySnapshot;
+            result = { ...snapshot, events: [...snapshot.events, ...events] };
+          }
+        }
+      }
+      return result;
+    } finally {
+      if (initializingSessionId) initializationEvents.delete(initializingSessionId);
+    }
+  };
+
   return {
     publish: emit,
     advanceSequence(events) { nextEvent.advanceTo(events.reduce((seq, event) => Math.max(seq, event.seq), 0)); },
@@ -210,88 +269,56 @@ export function createRuntimeGatewayService(
     async handleRequest(request) {
       const params = paramsRecord(request.params);
       const piSessionId = typeof params.piSessionId === "string" ? params.piSessionId : undefined;
-      const bypassQueue = request.method === "stop_run";
-      const key = bypassQueue ? undefined : typeof params.sessionId === "string" ? params.sessionId
-        : piSessionId ? sessionIdsByPiSessionId.get(piSessionId) ?? piSessionId : undefined;
+      let key: string | undefined;
       let release: (() => void) | undefined;
       let current: Promise<void> | undefined;
-      let previous: Promise<void> | undefined;
-      let pendingClose: Promise<void> | undefined;
-      if (key) {
-        previous = requests.get(key);
-        current = new Promise<void>(resolve => { release = resolve; });
-        requests.set(key, current);
-        // Input hooks can await a child before accepting the user's prompt.
-        // Cancel that work before waiting on its metadata request to finish.
+      try {
+        // Resolve both command shapes to one queue, including the first request
+        // after restart. A view read never waits for execution or input hooks.
+        if (piSessionId && !sessionIdsByPiSessionId.has(piSessionId) && options.projections) {
+          const projection = typeof params.sessionId === "string"
+            ? await options.projections.get(params.sessionId)
+            : (await options.projections.list()).find(record => record.piSessionId === piSessionId);
+          if (projection?.piSessionId === piSessionId) sessionIdsByPiSessionId.set(piSessionId, projection.sessionId);
+        }
+        const bypassQueue = ["stop_run", "get_runtime_snapshot", "resolve_tool_schemas"].includes(request.method);
+        key = bypassQueue ? undefined : piSessionId ? sessionIdsByPiSessionId.get(piSessionId) ?? piSessionId
+          : typeof params.sessionId === "string" ? params.sessionId : undefined;
+        const previous = key ? requests.get(key) : undefined;
+        if (key) {
+          current = new Promise<void>(resolve => { release = resolve; });
+          requests.set(key, current);
+        }
+        let pendingClose: Promise<void> | undefined;
         if (previous && request.method === "delete_session" && options.driver.disposeSession) {
           const rootPiId = [...sessionIdsByPiSessionId].find(([, id]) => id === key)?.[0];
           if (rootPiId) pendingClose = options.driver.disposeSession(rootPiId);
         }
-      }
-      let initializingSessionId: string | undefined;
-      try {
-        await Promise.all([previous, pendingClose]);
-        if (["create_session", "resume_session", "fork_session"].includes(request.method)) {
-          initializingSessionId = requiredString(paramsRecord(request.params).sessionId, "sessionId");
-          initializationEvents.set(initializingSessionId, []);
-        }
-        let result = await dispatchRuntimeGatewayRequest({
-          request,
-          driver: options.driver,
-          flushProjections: () => projectionWrites.flush(),
-          journal: options.journal,
-          projections: options.projections,
-          dataDir,
-          emit,
-          appendJournalEvent,
-          now,
-          recordUserSubmission(piSessionId, submittedAt) {
-            const sessionId = sessionIdsByPiSessionId.get(piSessionId);
-            if (sessionId) projectionWrites.recordUserSubmission(sessionId, submittedAt);
-          },
-          advanceEventSequence(events) {
-            nextEvent.advanceTo(
-              events.reduce((highestSeq, event) => Math.max(highestSeq, event.seq), 0),
-            );
-          },
-          rememberSession(snapshot) {
-            sessionIdsByPiSessionId.set(snapshot.piSessionId, snapshot.sessionId);
-          },
-          resolveSessionId(piSessionId) {
-            return sessionIdsByPiSessionId.get(piSessionId) ?? null;
-          },
-        });
 
-        if (initializingSessionId) {
-          const pending = initializationEvents.get(initializingSessionId) ?? [];
-          initializationEvents.delete(initializingSessionId);
-          // Fork history and the session projection must exist before startup
-          // events are sequenced. Include them in the first response: the
-          // renderer cannot subscribe to a session it has not received yet.
-          const events = pending.map(emit).filter((event): event is RuntimeGatewayEventEnvelope => event !== null);
-          if (events.length > 0) {
-            if (request.method === "fork_session") {
-              const fork = result as ForkRuntimeSessionResult;
-              result = { ...fork, snapshot: { ...fork.snapshot, events: [...fork.snapshot.events, ...events] } };
-            } else {
-              const snapshot = result as RuntimeGatewaySnapshot;
-              result = { ...snapshot, events: [...snapshot.events, ...events] };
-            }
+        let preparation: Promise<void> | undefined;
+        if (piSessionId && ["send_prompt", "queue_follow_up", "configure_model"].includes(request.method)) {
+          preparation = preparing.get(piSessionId);
+          if (!preparation && options.driver.hasSession?.(piSessionId) === false) {
+            preparation = (async () => {
+              await previous;
+              const projection = await findSessionProjection(options.projections, params);
+              if (options.driver.hasSession?.(piSessionId)) return;
+              await dispatch({ id: request.id, method: "resume_session", params: projection });
+            })();
+            preparing.set(piSessionId, preparation);
+            const pending = preparation;
+            void pending.finally(() => {
+              if (preparing.get(piSessionId) === pending) preparing.delete(piSessionId);
+            }).catch(() => {});
           }
         }
-        await projectionWrites.flush();
-
-        return {
-          id: request.id,
-          result,
-        };
+        await Promise.all([previous, pendingClose, preparation]);
+        const result = await dispatch(request);
+        if (!bypassQueue) await projectionWrites.flush();
+        return { id: request.id, result };
       } catch (error) {
-        return {
-          id: request.id,
-          error: error instanceof Error ? error.message : String(error),
-        };
+        return { id: request.id, error: error instanceof Error ? error.message : String(error) };
       } finally {
-        if (initializingSessionId) initializationEvents.delete(initializingSessionId);
         release?.();
         if (key && requests.get(key) === current) requests.delete(key);
       }
@@ -580,23 +607,50 @@ async function dispatchRuntimeGatewayRequest(input: {
 
       input.advanceEventSequence(journaled);
 
-      const snapshot = await input.driver.getSnapshot(piSessionId);
+      const cold = input.driver.hasSession?.(piSessionId) === false;
+      const persisted = cold ? await findSessionProjection(input.projections, params) : null;
+      const snapshot: RuntimeGatewaySnapshot = cold
+        ? snapshotFromProjection(persisted!)
+        : await input.driver.getSnapshot(piSessionId);
       const snapshotWithEvents = journaled.length
         ? { ...snapshot, events: journaled }
         : snapshot;
 
-      // The journal is the Gateway's event truth; drivers only own
-      // status/summary. Fall back to driver events when nothing was journaled.
-      await saveSnapshotProjection({
-        store: input.projections,
-        snapshot: snapshotWithEvents,
-      });
-
-      return snapshotWithEvents;
+      return { ...snapshotWithEvents, executionState: cold ? "cold" : "ready" };
     }
     default:
       throw new Error(`Unknown Runtime Gateway method "${input.request.method}".`);
   }
+}
+
+async function findSessionProjection(store: SessionProjectionStore | undefined, params: Record<string, unknown>) {
+  const piSessionId = requiredString(params.piSessionId, "piSessionId");
+  const projection = typeof params.sessionId === "string"
+    ? await store?.get(params.sessionId)
+    : (await store?.list())?.find(record => record.piSessionId === piSessionId);
+  if (!projection || projection.piSessionId !== piSessionId) {
+    throw new Error(`Session history for "${piSessionId}" was not found.`);
+  }
+  return projection;
+}
+
+function snapshotFromProjection(projection: PersistedSessionProjection): RuntimeGatewaySnapshot {
+  return {
+    sessionId: projection.sessionId,
+    runtimeId: projection.runtimeId,
+    piSessionId: projection.piSessionId,
+    projectId: projection.projectId,
+    cwd: projection.cwd,
+    sessionName: projection.sessionName,
+    sessionFile: projection.sessionFile,
+    checkout: projection.checkout,
+    status: projection.status === "running" ? "failed"
+      : projection.status === "archived" ? "completed" : projection.status,
+    summary: projection.summary,
+    modelControls: projection.modelSelection ? { models: [], selected: projection.modelSelection } : undefined,
+    events: [],
+    updatedAt: projection.updatedAt,
+  };
 }
 
 function createRuntimeEventProjectionWriter(store?: SessionProjectionStore) {
