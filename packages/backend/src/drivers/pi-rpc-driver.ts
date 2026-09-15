@@ -292,6 +292,14 @@ export function createPiRpcProcessDriver(
       };
     },
 
+    async sendSubagent() {
+      throw new Error('Pi RPC driver does not support "send_subagent".');
+    },
+
+    async stopSubagent() {
+      throw new Error('Pi RPC driver does not support "stop_subagent".');
+    },
+
     async configureModel() {
       throw new Error(
         'Pi RPC driver does not support "configure_model": capability discovery is only available through the SDK driver.',

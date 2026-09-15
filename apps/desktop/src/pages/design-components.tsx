@@ -1028,6 +1028,59 @@ function PiTrajectoryInspectorGallery() {
           </div>
         </Variant>
       </VariantRow>
+      <VariantRow>
+        <Variant caption="Agent step — Send/Stop while the child is running">
+          <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
+            <PiTrajectoryInspector
+              childRecord={{
+                childSessionId: "child-1",
+                parentSessionId: "parent",
+                ownerToolCallId: "call-agent",
+                state: "started",
+                source: "tintinweb",
+                createdAt: "2026-09-15T12:00:00.000Z",
+                updatedAt: "2026-09-15T12:00:00.000Z",
+                capabilities: { send: true, stop: true },
+                sourceAgentId: "ag-1",
+              }}
+              childSession={{ id: "child-1", isAvailable: true }}
+              step={agentStep}
+              tab="Summary"
+              turn={trajectoryTurns[1]}
+              onClose={() => {}}
+              onOpenChildSession={() => {}}
+              onSendToChild={() => {}}
+              onStopChild={() => {}}
+              onTabChange={() => {}}
+            />
+          </div>
+        </Variant>
+        <Variant caption="Agent step — Send on a settled child (stop hidden)">
+          <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
+            <PiTrajectoryInspector
+              childRecord={{
+                childSessionId: "child-1",
+                parentSessionId: "parent",
+                ownerToolCallId: "call-agent",
+                state: "completed",
+                source: "tintinweb",
+                createdAt: "2026-09-15T12:00:00.000Z",
+                updatedAt: "2026-09-15T12:01:00.000Z",
+                capabilities: { send: true, stop: true },
+                sourceAgentId: "ag-1",
+              }}
+              childSession={{ id: "child-1", isAvailable: true }}
+              step={agentStep}
+              tab="Summary"
+              turn={trajectoryTurns[1]}
+              onClose={() => {}}
+              onOpenChildSession={() => {}}
+              onSendToChild={() => {}}
+              onTabChange={() => {}}
+            />
+          </div>
+        </Variant>
+      </VariantRow>
     </GallerySection>
   );
 }

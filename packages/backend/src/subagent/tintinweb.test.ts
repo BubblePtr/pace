@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { SessionDetail, SessionSummary, SessionTurn, SubagentRecord } from "@pace/core";
 import { indexSubagentRecords } from "@pace/core";
 import type { PiEventBus } from "./shim";
@@ -25,6 +25,47 @@ function createMemoryBus(): PiEventBus & { emit(type: string, data: unknown): vo
       }
     },
   };
+}
+
+function createListenOnlyBus() {
+  const listeners = new Map<string, Set<(data: unknown) => void>>();
+  return {
+    on(channel: string, handler: (data: unknown) => void) {
+      const set = listeners.get(channel) ?? new Set();
+      set.add(handler);
+      listeners.set(channel, set);
+      return () => set.delete(handler);
+    },
+    trigger(channel: string, data: unknown) {
+      for (const handler of listeners.get(channel) ?? []) {
+        handler(data);
+      }
+    },
+  };
+}
+function installFakeTintinwebRpc(
+  bus: PiEventBus & { emit(type: string, data: unknown): void },
+  agents: Map<string, { status: string; steered: string[]; stopped: boolean }>,
+) {
+  const reply = (channel: string, requestId: unknown, payload: Record<string, unknown>) => {
+    bus.emit(`${channel}:reply:${String(requestId)}`, payload);
+  };
+  bus.on("subagents:rpc:stop", (raw) => {
+    const params = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    const agentId = typeof params.agentId === "string" ? params.agentId : "";
+    const agent = agents.get(agentId);
+    if (!agent) {
+      reply("subagents:rpc:stop", params.requestId, { success: false, error: "Agent not found" });
+      return;
+    }
+    if (agent.status !== "running" && agent.status !== "queued") {
+      reply("subagents:rpc:stop", params.requestId, { success: false, error: "Agent is not running" });
+      return;
+    }
+    agent.stopped = true;
+    agent.status = "stopped";
+    reply("subagents:rpc:stop", params.requestId, { success: true });
+  });
 }
 
 function collect(observe: (onRecord: (record: SubagentRecord, phase: string) => void) => () => void) {
@@ -147,7 +188,7 @@ describe("tintinweb observe() live mapping", () => {
       sourceAgentId: "ag-fg",
       sessionFile: "/pi/sessions/child-fg.jsonl",
       usage: { inputTokens: 3, outputTokens: 5, cacheReadTokens: 0, totalTokens: 8, costUsd: 0.002 },
-      capabilities: { send: true, stop: true },
+      capabilities: { stop: true },
     });
     stop();
   });
@@ -388,9 +429,9 @@ describe("tintinweb fromSession() cold mapping", () => {
         state: "started",
         source: "tintinweb",
         sessionFile: "/home/me/.pi/agent/sessions/demo/child-cold.jsonl",
-        capabilities: { send: true, stop: true },
       }),
     ]);
+    expect(records[0]?.capabilities).toBeUndefined();
   });
 
   it("joins a foreground Agent result that settled inline", () => {
@@ -528,5 +569,173 @@ describe("tintinweb fromSession() cold mapping", () => {
     expect(lookup.get("call-resume")?.state).toBe("started");
     expect(lookup.get("call-1")?.childSessionId).toBe("child");
     expect(lookup.get("call-resume")?.sourceAgentId).toBe("ag-1");
+  });
+});
+
+describe("tintinweb send/stop", () => {
+  const MANAGER_KEY = Symbol.for("pi-subagents:manager");
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[MANAGER_KEY];
+  });
+
+  function startChild(
+    bus: PiEventBus & { emit(type: string, data: unknown): void },
+    sessionListeners: Array<(event: unknown) => void>,
+  ) {
+    for (const listener of sessionListeners) {
+      listener({
+        type: "tool_execution_start",
+        toolCallId: "call-ctl",
+        toolName: "Agent",
+        args: { subagent_type: "Explore", prompt: "look", description: "Look" },
+      });
+    }
+    bus.emit("subagents:started", {
+      id: "ag-ctl",
+      type: "Explore",
+      description: "Look",
+      sessionFile: "/pi/sessions/child-ctl.jsonl",
+    });
+  }
+
+  function observeShim(bus: PiEventBus, extra: { resolveChild?: boolean } = {}) {
+    const sessionListeners: Array<(event: unknown) => void> = [];
+    const shim = createTintinwebSubagentShim({
+      events: bus,
+      subscribeSession: (listener) => {
+        sessionListeners.push(listener);
+        return () => {};
+      },
+      now: () => "2026-09-15T12:00:00.000Z",
+      ...(extra.resolveChild ? { resolveChildSessionId: () => "child-ctl" } : {}),
+    });
+    const { emitted, stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
+    return { shim, sessionListeners, emitted, stop };
+  }
+
+  it("omits capabilities when the event bus cannot emit", () => {
+    const bus = createListenOnlyBus();
+    const sessionListeners: Array<(event: unknown) => void> = [];
+    const shim = createTintinwebSubagentShim({
+      events: bus,
+      subscribeSession: (listener) => {
+        sessionListeners.push(listener);
+        return () => {};
+      },
+      now: () => "2026-09-15T12:00:00.000Z",
+    });
+    const { emitted, stop } = collect((onRecord) =>
+      shim.observe({ parentSessionId, onRecord }),
+    );
+    for (const listener of sessionListeners) {
+      listener({
+        type: "tool_execution_start",
+        toolCallId: "call-ctl",
+        toolName: "Agent",
+        args: { subagent_type: "Explore", prompt: "look", description: "Look" },
+      });
+    }
+    bus.trigger("subagents:started", { id: "ag-ctl", type: "Explore", description: "Look" });
+    expect(emitted[0]?.record.capabilities).toBeUndefined();
+    stop();
+  });
+
+  it("stops over the event-bus RPC without advertising send", async () => {
+    const bus = createMemoryBus();
+    const agents = new Map([["ag-ctl", { status: "running", steered: [] as string[], stopped: false }]]);
+    installFakeTintinwebRpc(bus, agents);
+    const { shim, sessionListeners, emitted, stop } = observeShim(bus, { resolveChild: true });
+    startChild(bus, sessionListeners);
+    expect(emitted[0]?.record.capabilities).toEqual({ stop: true });
+    await expect(shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" })).rejects.toThrow(
+      "does not advertise send",
+    );
+
+    await shim.stop?.({ childSessionId: "child-ctl" });
+    expect(agents.get("ag-ctl")?.stopped).toBe(true);
+    bus.emit("subagents:failed", { id: "ag-ctl", status: "stopped" });
+    expect(emitted[emitted.length - 1]).toMatchObject({ phase: "end", record: { state: "stopped" } });
+    stop();
+  });
+
+  it("rejects send/stop when the record did not advertise the control", async () => {
+    const bus = createListenOnlyBus();
+    const sessionListeners: Array<(event: unknown) => void> = [];
+    const shim = createTintinwebSubagentShim({
+      events: bus,
+      subscribeSession: (listener) => {
+        sessionListeners.push(listener);
+        return () => {};
+      },
+      now: () => "2026-09-15T12:00:00.000Z",
+    });
+    shim.observe({ parentSessionId, onRecord: () => {} });
+    for (const listener of sessionListeners) {
+      listener({
+        type: "tool_execution_start",
+        toolCallId: "call-ctl",
+        toolName: "Agent",
+        args: { subagent_type: "Explore", prompt: "look", description: "Look" },
+      });
+    }
+    bus.trigger("subagents:started", { id: "ag-ctl", type: "Explore", description: "Look" });
+    await expect(shim.send?.({ sourceAgentId: "ag-ctl", text: "hi" })).rejects.toThrow(
+      "does not advertise send",
+    );
+    await expect(shim.stop?.({ sourceAgentId: "ag-ctl" })).rejects.toThrow("does not advertise stop");
+  });
+
+  it("advertises send only when the registry exposes steer/resume, and routes through those functions", async () => {
+    const bus = createMemoryBus();
+
+    (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
+      waitForAll: async () => {},
+      hasRunning: () => false,
+      spawn: () => "unused",
+      getRecord: () => undefined,
+    };
+    const lacking = observeShim(bus, { resolveChild: true });
+    startChild(bus, lacking.sessionListeners);
+    expect(lacking.emitted[0]?.record.capabilities).toEqual({ stop: true });
+    expect(lacking.emitted[0]?.record.capabilities?.send).toBeUndefined();
+    await expect(lacking.shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" })).rejects.toThrow(
+      "does not advertise send",
+    );
+    lacking.stop();
+
+    const steered: Array<{ id: string; message: string }> = [];
+    const resumed: Array<{ id: string; prompt: string; options: unknown }> = [];
+    (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
+      steer(id: string, message: string) {
+        steered.push({ id, message });
+        return true;
+      },
+      resume: async (id: string, prompt: string, _signal?: unknown, options?: { isBackground?: boolean }) => {
+        resumed.push({ id, prompt, options });
+      },
+    };
+    const exposed = observeShim(bus, { resolveChild: true });
+    startChild(bus, exposed.sessionListeners);
+    expect(exposed.emitted[0]?.record.capabilities).toEqual({ send: true, stop: true });
+    await exposed.shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" });
+    expect(steered).toEqual([{ id: "ag-ctl", message: "nudge" }]);
+
+    bus.emit("subagents:completed", { id: "ag-ctl" });
+    expect(exposed.emitted[exposed.emitted.length - 1]).toMatchObject({
+      record: { state: "completed", capabilities: { send: true, stop: true } },
+    });
+    await exposed.shim.send?.({ sourceAgentId: "ag-ctl", text: "continue" });
+    expect(resumed).toEqual([{ id: "ag-ctl", prompt: "continue", options: { isBackground: true } }]);
+    bus.emit("subagents:started", {
+      id: "ag-ctl",
+      type: "Explore",
+      description: "Look",
+      sessionFile: "/pi/sessions/child-ctl.jsonl",
+    });
+    expect(exposed.emitted[exposed.emitted.length - 1]).toMatchObject({
+      phase: "update",
+      record: { state: "started", sourceAgentId: "ag-ctl" },
+    });
+    exposed.stop();
   });
 });

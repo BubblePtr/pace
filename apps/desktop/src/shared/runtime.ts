@@ -271,6 +271,9 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
       return invokeBrowserFallback("list_provider_auth_status");
     case "resolve_tool_schemas":
       return Promise.resolve({ schemas: {} } as T);
+    case "send_subagent":
+    case "stop_subagent":
+      return Promise.reject(new Error("Subagent control requires the desktop app"));
     case "list_available_model_controls":
       return Promise.resolve({
         models: [

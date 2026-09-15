@@ -765,6 +765,8 @@ function isRuntimeGatewayMethod(method: string) {
     method === "withdraw_queued_message" ||
     method === "steer_run" ||
     method === "stop_run" ||
+    method === "send_subagent" ||
+    method === "stop_subagent" ||
     method === "configure_model" ||
     method === "resolve_tool_schemas" ||
     method === "archive_session" ||

@@ -193,6 +193,8 @@ export function createSessionProcessDriver(options: SessionProcessDriverOptions)
     withdrawQueuedMessage: async input => processFor(input.piSessionId).call("withdrawQueuedMessage", [input]),
     steerRun: async input => processFor(input.piSessionId).call("steerRun", [input]),
     stopRun: async input => processFor(input.piSessionId).call("stopRun", [input]),
+    sendSubagent: async input => processFor(input.piSessionId).call("sendSubagent", [input]),
+    stopSubagent: async input => processFor(input.piSessionId).call("stopSubagent", [input]),
     configureModel: async input => processFor(input.piSessionId).call("configureModel", [input]),
     resolveToolSchemas: async input => piRoots.has(input.piSessionId)
       ? processFor(input.piSessionId).call("resolveToolSchemas", [input]) : Promise.resolve({ schemas: {} }),

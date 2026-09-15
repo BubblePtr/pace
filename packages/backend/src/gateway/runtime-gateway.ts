@@ -11,12 +11,15 @@ import type {
   RuntimeModelSelection,
   RuntimePromptImage,
   RuntimeToolSchemas,
+  SubagentRecord,
 } from "@pace/core";
 import {
   CHAT_PROJECT_ID,
   createRuntimeGatewaySequencer,
+  lookupSubagentByControlId,
   parseRuntimePromptImages,
   shouldJournalRuntimeEvent,
+  subagentAdvertisesControl,
 } from "@pace/core";
 import {
   copiedSessionEventInputsForFork,
@@ -90,6 +93,19 @@ export type StopRunInput = {
   piSessionId: string;
 };
 
+export type SendSubagentInput = {
+  piSessionId: string;
+  childSessionId?: string;
+  sourceAgentId?: string;
+  text: string;
+};
+
+export type StopSubagentInput = {
+  piSessionId: string;
+  childSessionId?: string;
+  sourceAgentId?: string;
+};
+
 export type ConfigureRuntimeModelInput = RuntimeModelSelection & {
   piSessionId: string;
 };
@@ -109,6 +125,8 @@ export type PiRuntimeDriver = {
   withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<RuntimeGatewayQueuedMessage>;
   steerRun(input: SteerRunInput): Promise<RuntimeGatewayDriverEvent>;
   stopRun(input: StopRunInput): Promise<RuntimeGatewayDriverEvent>;
+  sendSubagent?(input: SendSubagentInput): Promise<{ ok: true }>;
+  stopSubagent?(input: StopSubagentInput): Promise<{ ok: true }>;
   configureModel?(input: ConfigureRuntimeModelInput): Promise<RuntimeModelControls>;
   resolveToolSchemas?(input: ResolveToolSchemasInput): Promise<RuntimeToolSchemas>;
   getSnapshot(piSessionId: string): Promise<RuntimeGatewaySnapshot>;
@@ -155,6 +173,29 @@ export function createRuntimeGatewayService(
   const projectionWrites = createRuntimeEventProjectionWriter(options.projections);
   const initializationEvents = new Map<string, RuntimeGatewayDriverEvent[]>();
   const requests = new Map<string, Promise<void>>();
+  const subagentsByPiSessionId = new Map<string, SubagentRecord[]>();
+
+  const rememberSubagentPayload = (piSessionId: string, payload: Record<string, unknown>) => {
+    if (payload.type !== "subagent" || !isRecord(payload.record)) {
+      return;
+    }
+    const record = payload.record as SubagentRecord;
+    const existing = subagentsByPiSessionId.get(piSessionId) ?? [];
+    const next = existing.filter((item) => {
+      if (record.sourceAgentId && item.sourceAgentId === record.sourceAgentId) {
+        return false;
+      }
+      if (record.childSessionId && item.childSessionId === record.childSessionId) {
+        return false;
+      }
+      return item.ownerToolCallId !== record.ownerToolCallId;
+    });
+    next.push(record);
+    subagentsByPiSessionId.set(piSessionId, next);
+  };
+
+  const findSubagent = (piSessionId: string, target: { childSessionId?: string; sourceAgentId?: string }) =>
+    lookupSubagentByControlId(subagentsByPiSessionId.get(piSessionId) ?? [], target);
 
   const emit = (event: RuntimeGatewayDriverEvent) => {
     const sessionId =
@@ -172,6 +213,7 @@ export function createRuntimeGatewayService(
       ts: event.ts,
       payload: event.payload,
     });
+    rememberSubagentPayload(event.piSessionId, event.payload);
     const backendEvent: RuntimeGatewayBackendEvent = {
       type: "event",
       event: envelope,
@@ -227,9 +269,10 @@ export function createRuntimeGatewayService(
           if (sessionId) projectionWrites.recordUserSubmission(sessionId, submittedAt);
         },
         advanceEventSequence(events) {
-          nextEvent.advanceTo(
-            events.reduce((highestSeq, event) => Math.max(highestSeq, event.seq), 0),
-          );
+          nextEvent.advanceTo(events.reduce((seq, event) => Math.max(seq, event.seq), 0));
+          for (const event of events) {
+            rememberSubagentPayload(event.piSessionId, event.payload);
+          }
         },
         rememberSession(snapshot) {
           sessionIdsByPiSessionId.set(snapshot.piSessionId, snapshot.sessionId);
@@ -237,6 +280,7 @@ export function createRuntimeGatewayService(
         resolveSessionId(piSessionId) {
           return sessionIdsByPiSessionId.get(piSessionId) ?? null;
         },
+        findSubagent,
       });
 
       if (initializingSessionId) {
@@ -281,7 +325,7 @@ export function createRuntimeGatewayService(
             : (await options.projections.list()).find(record => record.piSessionId === piSessionId);
           if (projection?.piSessionId === piSessionId) sessionIdsByPiSessionId.set(piSessionId, projection.sessionId);
         }
-        const bypassQueue = ["stop_run", "get_runtime_snapshot", "resolve_tool_schemas"].includes(request.method);
+        const bypassQueue = ["stop_run", "send_subagent", "stop_subagent", "get_runtime_snapshot", "resolve_tool_schemas"].includes(request.method);
         key = bypassQueue ? undefined : piSessionId ? sessionIdsByPiSessionId.get(piSessionId) ?? piSessionId
           : typeof params.sessionId === "string" ? params.sessionId : undefined;
         const previous = key ? requests.get(key) : undefined;
@@ -348,6 +392,10 @@ async function dispatchRuntimeGatewayRequest(input: {
   rememberSession: (snapshot: RuntimeGatewaySnapshot) => void;
   resolveSessionId: (piSessionId: string) => string | null;
   flushProjections: () => Promise<void>;
+  findSubagent: (
+    piSessionId: string,
+    target: { childSessionId?: string; sourceAgentId?: string },
+  ) => SubagentRecord | undefined;
 }) {
   const params = paramsRecord(input.request.params);
 
@@ -524,6 +572,48 @@ async function dispatchRuntimeGatewayRequest(input: {
           piSessionId: requiredString(params.piSessionId, "piSessionId"),
         }),
       );
+    case "send_subagent": {
+      const piSessionId = requiredString(params.piSessionId ?? params.sessionId, "sessionId");
+      const text = requiredString(params.text, "text");
+      const target = subagentControlTarget(params);
+      const record = input.findSubagent(piSessionId, target);
+      if (!record) {
+        throw new Error(
+          `Subagent "${target.sourceAgentId ?? target.childSessionId}" was not found for this session.`,
+        );
+      }
+      if (!subagentAdvertisesControl(record, "send")) {
+        throw new Error("This subagent does not advertise send.");
+      }
+      if (!input.driver.sendSubagent) {
+        throw new Error('Runtime driver does not support "send_subagent".');
+      }
+      return input.driver.sendSubagent({
+        piSessionId,
+        text,
+        ...target,
+      });
+    }
+    case "stop_subagent": {
+      const piSessionId = requiredString(params.piSessionId ?? params.sessionId, "sessionId");
+      const target = subagentControlTarget(params);
+      const record = input.findSubagent(piSessionId, target);
+      if (!record) {
+        throw new Error(
+          `Subagent "${target.sourceAgentId ?? target.childSessionId}" was not found for this session.`,
+        );
+      }
+      if (!subagentAdvertisesControl(record, "stop")) {
+        throw new Error("This subagent does not advertise stop.");
+      }
+      if (!input.driver.stopSubagent) {
+        throw new Error('Runtime driver does not support "stop_subagent".');
+      }
+      return input.driver.stopSubagent({
+        piSessionId,
+        ...target,
+      });
+    }
     case "configure_model": {
       if (!input.driver.configureModel) {
         throw new Error('Runtime driver does not support "configure_model".');
@@ -1143,4 +1233,25 @@ function requiredThinkingLevel(value: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function subagentControlTarget(params: Record<string, unknown>): {
+  childSessionId?: string;
+  sourceAgentId?: string;
+} {
+  const childSessionId =
+    typeof params.childSessionId === "string" && params.childSessionId.trim()
+      ? params.childSessionId.trim()
+      : undefined;
+  const sourceAgentId =
+    typeof params.sourceAgentId === "string" && params.sourceAgentId.trim()
+      ? params.sourceAgentId.trim()
+      : undefined;
+  if (!childSessionId && !sourceAgentId) {
+    throw new Error("childSessionId or sourceAgentId is required");
+  }
+  return {
+    ...(childSessionId ? { childSessionId } : {}),
+    ...(sourceAgentId ? { sourceAgentId } : {}),
+  };
 }

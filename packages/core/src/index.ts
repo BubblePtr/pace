@@ -89,6 +89,8 @@ export {
   indexSubagentRecords,
   applySubagentRecord,
   lookupSubagentByOwnerToolCallId,
+  lookupSubagentByControlId,
+  subagentAdvertisesControl,
   type SubagentSource,
   type SubagentState,
   type SubagentUsage,
@@ -96,6 +98,7 @@ export {
   type SubagentRecord,
   type SubagentEventPhase,
   type SubagentLookup,
+  type SubagentControlId,
 } from "./subagent";
 
 export {
