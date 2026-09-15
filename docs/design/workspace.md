@@ -9,6 +9,7 @@
 - 开合用 `SessionDockTrigger`（`isOpen` / `onOpenChange`，工具栏里 `alignToRail`）。宽度交给 Astryx `useResizable`，边界用 `sessionDockResizableBounds(availableWidth)`：默认 560、最小 340、上限 = 可分配宽 − Chat 最小宽 400。
 - 持有原生资源的 surface 用 `useSessionDockMotion()` 得知开合动画中，届时让位。
 - **宿主不写表头。** 面板顶部 40px 带就是 surface 的第一行。
+- Rail 固定在最右侧，四个 surface 图标的 tooltip 显示在图标左侧（Astryx `placement="start"`），避免遮挡纵向相邻图标；悬停和键盘聚焦均沿用 Astryx 行为。
 
 ## Surface 第一行：SessionSurfaceBar / SessionSurfaceTabs
 

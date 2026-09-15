@@ -741,7 +741,7 @@ export function Marketplace({
                       >
                         {pkg.title}
                       </Button>
-                      <Text type="supporting" maxLines={1}>
+                      <Text type="supporting" maxLines={1} hasTruncateTooltip={false}>
                         {pkg.author
                           ? `by ${pkg.author}`
                           : pkg.installed
@@ -750,13 +750,18 @@ export function Marketplace({
                       </Text>
                     </VStack>
                   </HStack>
-                  <Text className="package-card-description" maxLines={3}>
+                  <Text
+                    className="package-card-description"
+                    maxLines={3}
+                    hasTruncateTooltip={false}
+                  >
                     {pkg.description}
                   </Text>
                   <Text
                     className="package-card-source"
                     type="supporting"
                     maxLines={1}
+                    hasTruncateTooltip={false}
                   >
                     {pkg.installed?.source ?? pkg.name}
                   </Text>

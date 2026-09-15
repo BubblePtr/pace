@@ -1,4 +1,5 @@
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
 import {
   ToggleButton,
   ToggleButtonGroup,
@@ -320,25 +321,29 @@ export function SessionDock({
             const badge = badges?.[surfaceId];
 
             return (
-              <ToggleButton
+              <Tooltip
                 key={surfaceId}
-                icon={
-                  <span className="relative flex items-center justify-center">
-                    <RailIcon className="size-4" />
-                    {badge ? (
-                      <span className="absolute -top-1.5 -right-2 rounded-full bg-primary px-1 text-[10px] leading-4 font-medium text-background tabular-nums">
-                        {badge}
-                      </span>
-                    ) : null}
-                  </span>
-                }
-                isIconOnly
-                label={meta.title}
-                // Same size as the toolbar toggle so the column reads as one.
-                size="sm"
-                tooltip={`${meta.title} — ${meta.hint}`}
-                value={surfaceId}
-              />
+                content={`${meta.title} — ${meta.hint}`}
+                placement="start"
+              >
+                <ToggleButton
+                  icon={
+                    <span className="relative flex items-center justify-center">
+                      <RailIcon className="size-4" />
+                      {badge ? (
+                        <span className="absolute -top-1.5 -right-2 rounded-full bg-primary px-1 text-[10px] leading-4 font-medium text-background tabular-nums">
+                          {badge}
+                        </span>
+                      ) : null}
+                    </span>
+                  }
+                  isIconOnly
+                  label={meta.title}
+                  // Same size as the toolbar toggle so the column reads as one.
+                  size="sm"
+                  value={surfaceId}
+                />
+              </Tooltip>
             );
           })}
         </ToggleButtonGroup>
