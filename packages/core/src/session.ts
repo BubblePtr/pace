@@ -1,6 +1,8 @@
 // Session data contracts — the ubiquitous language shared across the process
 // seam: the utilityProcess parser produces these; the renderer consumes them.
 
+import type { SubagentRecord } from "./subagent";
+
 export type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
 
 export type SessionContentPart = {
@@ -58,6 +60,8 @@ export type SessionDetail = {
   turnCount: number;
   durationSeconds?: number;
   turns: SessionTurn[];
+  /** Cold-reconstructed plugin children; absent on parse-only fixtures. */
+  subagents?: SubagentRecord[];
 };
 
 export type ModelUsage = {

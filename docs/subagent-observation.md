@@ -24,7 +24,7 @@ git:github.com/tintinweb/pi-subagents@e955e29c51b7a6cce37e1108cd2d6c57a77e151c
 
 独立 Trajectory 页扫描 Pi 会话目录中的 JSONL，不要求拿到插件的 Session 对象。只要子会话保存到扫描范围内，就能作为普通 Pi 会话回放。Tintinweb 默认保存一级子代理会话，嵌套默认使用内存；配置可以覆盖。内存会话、扫描目录之外的文件和临时 `.output` 文件不会自动成为 Trajectory 历史。
 
-选中父会话里的 `Agent` 步骤时，Inspector 可提供「Open child session」：Pace 用 tintinweb 映射把插件 `id` / `sessionFile` 和父 `toolCallId` 收成隐藏的 `SubagentRecord`（`AgentRuntimeEvent` `type: "subagent"`，`surface: "hidden"`），不进 Live Chat、也不多出 Trajectory 行。子 JSONL 不在 `list_sessions` 中时按钮禁用，不是错误。CLI 录制的父 JSONL 走同一映射的冷扫描。仍不提供 Subagents Dock、逐节点费用或子会话实时 Trace。
+选中父会话里的 `Agent` 步骤时，Inspector 可提供「Open child session」：Pace 用 tintinweb 映射把插件 `id` / `sessionFile` 和父 `toolCallId` 收成隐藏的 `SubagentRecord`（`AgentRuntimeEvent` `type: "subagent"`，`surface: "hidden"`），不进 Live Chat、也不多出 Trajectory 行。子 JSONL 不在 `list_sessions` 中时按钮禁用，不是错误。CLI 录制的父 JSONL 在 `get_session_detail`（`workspace/sessions.ts`）里走同一映射的冷扫描，记录挂在 `SessionDetail.subagents` 上返回。仍不提供 Subagents Dock、逐节点费用或子会话实时 Trace。
 
 ## 验证
 

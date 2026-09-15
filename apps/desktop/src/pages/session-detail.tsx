@@ -28,7 +28,6 @@ import {
 } from "@/shared/ui/pi-trajectory-strip";
 import type { RuntimeToolSchemas, SessionDetail, SessionTurn, SubagentLookup } from "@pace/core";
 import { indexSubagentRecords, lookupSubagentByOwnerToolCallId } from "@pace/core";
-import { tintinwebSubagentShim } from "@pace/backend/subagent";
 import { listSessions } from "@/entities/session/sessions";
 
 export type {
@@ -633,14 +632,10 @@ export function SessionDetailPage() {
     queryFn: () => getToolSchemas(sessionId, toolNames),
     enabled: toolNames.length > 0,
   });
-  const subagentsByOwnerToolCallId = useMemo(() => {
-    if (!detail.data) {
-      return undefined;
-    }
-    return indexSubagentRecords(
-      tintinwebSubagentShim.fromSession?.(detail.data, sessions.data ?? []) ?? [],
-    );
-  }, [detail.data, sessions.data]);
+  const subagentsByOwnerToolCallId = useMemo(
+    () => indexSubagentRecords(detail.data?.subagents ?? []),
+    [detail.data],
+  );
   const indexedSessionIds = useMemo(
     () => new Set((sessions.data ?? []).map((session) => session.id)),
     [sessions.data],

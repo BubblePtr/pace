@@ -22,7 +22,6 @@ export default defineConfig(({ command }) => {
       alias: {
         "@": resolve(__dirname, "apps/desktop/src"),
         "@pace/core": resolve(__dirname, "packages/core/src/index.ts"),
-        "@pace/backend/subagent": resolve(__dirname, "packages/backend/src/subagent/index.ts"),
         "@pace/backend": resolve(__dirname, "packages/backend/src/index.ts"),
         react: resolve(__dirname, "node_modules/react"),
         "react-dom": resolve(__dirname, "node_modules/react-dom"),

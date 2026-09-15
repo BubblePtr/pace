@@ -9,8 +9,7 @@
     "spike:pi-sdk": "bun run scripts/spike-pi-sdk-driver.ts"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./subagent": "./src/subagent/index.ts"
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.3",

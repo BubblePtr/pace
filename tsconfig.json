@@ -20,7 +20,6 @@
       "@pace/core": ["packages/core/src/index.ts"],
       "@pace/core/testing": ["packages/core/src/testing.ts"],
       "@pace/backend": ["packages/backend/src/index.ts"],
-      "@pace/backend/subagent": ["packages/backend/src/subagent/index.ts"],
       "@/*": ["apps/desktop/src/*"]
     }
   },
