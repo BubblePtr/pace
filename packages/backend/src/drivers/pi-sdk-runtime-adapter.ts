@@ -3,6 +3,8 @@
 // into the normalizer and maps SDK session commands to runtime semantics.
 
 import { createAgentRuntimeEventNormalizer } from "../gateway/agent-runtime-event-normalizer";
+import { createTintinwebSubagentShim, piEventBusFromUnknown } from "../subagent/tintinweb";
+import { readFileSync } from "node:fs";
 import type {
   RuntimeContextUsage,
   RuntimeGatewayQueuedMessage,
@@ -576,16 +578,19 @@ export function createPublicPiSdkRuntimeFactory(
 ): PiSdkRuntimeFactory {
   const now = options.now ?? (() => new Date().toISOString());
 
-  return async (input) =>
-    createPublicPiSdkRuntime({
+  return async (input) => {
+    const sessionOptions = {
+      ...options.sessionOptions,
+      ...await options.sessionOptionsFor?.(input),
+      cwd: input.cwd,
+    };
+    return createPublicPiSdkRuntime({
       input,
       now,
-      ...(await options.sdk.createAgentSession({
-        ...options.sessionOptions,
-        ...await options.sessionOptionsFor?.(input),
-        cwd: input.cwd,
-      })),
+      resourceLoader: sessionOptions.resourceLoader,
+      ...(await options.sdk.createAgentSession(sessionOptions)),
     });
+  };
 }
 
 export function createPublicPiSdkRuntimeResumer(
@@ -600,12 +605,13 @@ export function createPublicPiSdkRuntimeResumer(
       throw new Error("Pi SDK SessionManager.open is unavailable.");
     }
 
-    const { session, extensionsResult } = await options.sdk.createAgentSession({
+    const sessionOptions = {
       ...options.sessionOptions,
       ...await options.sessionOptionsFor?.({ ...input, cwd: sessionManager.getCwd?.() || input.cwd }),
       cwd: sessionManager.getCwd?.() || input.cwd,
       sessionManager,
-    });
+    };
+    const { session, extensionsResult } = await options.sdk.createAgentSession(sessionOptions);
 
     if (input.modelSelection) {
       // The persisted selection may reference a model Pi has since removed or
@@ -617,6 +623,7 @@ export function createPublicPiSdkRuntimeResumer(
     return createPublicPiSdkRuntime({
       input,
       now,
+      resourceLoader: sessionOptions.resourceLoader,
       session,
       extensionsResult,
     });
@@ -662,17 +669,19 @@ export function createPublicPiSdkRuntimeForker(
       }
     }
 
-    const { session, extensionsResult } = await options.sdk.createAgentSession({
+    const sessionOptions = {
       ...options.sessionOptions,
       ...await options.sessionOptionsFor?.({ ...input, cwd: sessionManager.getCwd?.() || input.cwd }),
       cwd: sessionManager.getCwd?.() || input.cwd,
       sessionManager,
-    });
+    };
+    const { session, extensionsResult } = await options.sdk.createAgentSession(sessionOptions);
 
     return {
       runtime: await createPublicPiSdkRuntime({
         input,
         now: options.now ?? (() => new Date().toISOString()),
+        resourceLoader: sessionOptions.resourceLoader,
         session,
         extensionsResult,
       }),
@@ -685,6 +694,19 @@ function piImagesFromPrompt(images?: RuntimePromptImage[]) {
   return images?.length ? images.map(toPiImageContent) : undefined;
 }
 
+function childSessionIdFromSessionFileHeader(sessionFile: string): string | undefined {
+  try {
+    const line = readFileSync(sessionFile, "utf8").split(/\r?\n/, 1)[0];
+    if (!line) {
+      return undefined;
+    }
+    const record = JSON.parse(line) as { type?: unknown; id?: unknown };
+    return record.type === "session" && typeof record.id === "string" ? record.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function createPublicPiSdkRuntime(context: {
   input:
     | CreateRuntimeSessionInput
@@ -693,6 +715,7 @@ async function createPublicPiSdkRuntime(context: {
   now: () => string;
   session: PublicPiSdkAgentSession;
   extensionsResult?: { errors: Array<{ path: string; error: string }> };
+  resourceLoader?: unknown;
 }): Promise<PiSdkSessionRuntime> {
     const { session } = context;
     const now = context.now;
@@ -769,6 +792,27 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
     });
+    const unsubscribeSubagentShim = createTintinwebSubagentShim({
+      events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
+      subscribeSession: (listener) => session.subscribe(listener),
+      now,
+      resolveChildSessionId: childSessionIdFromSessionFileHeader,
+    }).observe({
+      parentSessionId: session.sessionId,
+      onRecord(record, phase) {
+        emit({
+          piSessionId: session.sessionId,
+          type: "subagent",
+          payload: {
+            type: "subagent",
+            phase,
+            record,
+            surface: "hidden",
+            origin: "sdk",
+          },
+        });
+      },
+    });
     const runtime: PiSdkSessionRuntime = {
       piSessionId: session.sessionId,
       runtimeId: `pi-sdk:${context.input.sessionId}`,
@@ -842,6 +886,7 @@ async function createPublicPiSdkRuntime(context: {
         let released = false;
         const release = () => {
           released = true;
+          unsubscribeSubagentShim();
           unsubscribe();
           listeners.clear();
           pendingEvents.length = 0;

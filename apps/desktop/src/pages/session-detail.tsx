@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,7 +26,10 @@ import {
   type StripSegment,
   type StripWidthMode,
 } from "@/shared/ui/pi-trajectory-strip";
-import type { RuntimeToolSchemas, SessionDetail, SessionTurn } from "@pace/core";
+import type { RuntimeToolSchemas, SessionDetail, SessionTurn, SubagentLookup } from "@pace/core";
+import { indexSubagentRecords, lookupSubagentByOwnerToolCallId } from "@pace/core";
+import { tintinwebSubagentShim } from "@pace/backend/subagent";
+import { listSessions } from "@/entities/session/sessions";
 
 export type {
   SessionContentPart,
@@ -142,12 +145,18 @@ export function SessionDetailView({
   isLoading = false,
   isError = false,
   toolSchemas,
+  subagentsByOwnerToolCallId,
+  indexedSessionIds,
+  onOpenChildSession,
 }: {
   session?: SessionDetail;
   sessionId: string;
   isLoading?: boolean;
   isError?: boolean;
   toolSchemas?: Record<string, TrajectoryToolSchema>;
+  subagentsByOwnerToolCallId?: SubagentLookup;
+  indexedSessionIds?: ReadonlySet<string>;
+  onOpenChildSession?: (sessionId: string) => void;
 }) {
   const turns = useMemo(() => buildTrajectoryTurns(session?.turns ?? []), [session?.turns]);
   const runs = useMemo(() => buildTrajectoryRuns(turns), [turns]);
@@ -211,6 +220,17 @@ export function SessionDetailView({
 
   const selectedStep = allSteps.find((step) => step.id === selectedStepId);
   const selectedTurn = selectedStep ? turns[selectedStep.turnIndex] : undefined;
+  const selectedSubagent = lookupSubagentByOwnerToolCallId(
+    subagentsByOwnerToolCallId,
+    selectedStep?.toolCallId,
+  );
+  const childSession =
+    selectedStep?.name === "Agent" && selectedSubagent?.childSessionId
+      ? {
+          id: selectedSubagent.childSessionId,
+          isAvailable: indexedSessionIds?.has(selectedSubagent.childSessionId) ?? false,
+        }
+      : undefined;
 
   function isRunDimmed(runIndex: number) {
     if (!focusRange) {
@@ -568,11 +588,17 @@ export function SessionDetailView({
           <aside className="shrink-0 bg-surface" style={{ width: inspectorWidth }}>
             {selectedStep && selectedTurn ? (
               <PiTrajectoryInspector
+                childSession={childSession}
                 schema={selectedStep.name ? toolSchemas?.[selectedStep.name] : undefined}
                 step={selectedStep}
                 tab={tab}
                 turn={selectedTurn}
                 onClose={() => setSelectedStepId(undefined)}
+                onOpenChildSession={
+                  childSession
+                    ? () => onOpenChildSession?.(childSession.id)
+                    : undefined
+                }
                 onTabChange={setTab}
               />
             ) : (
@@ -593,10 +619,12 @@ export function SessionDetailView({
 
 export function SessionDetailPage() {
   const { sessionId } = useParams({ from: "/sessions/$sessionId" });
+  const navigate = useNavigate();
   const detail = useQuery({
     queryKey: ["session-detail", sessionId],
     queryFn: () => getSessionDetail(sessionId),
   });
+  const sessions = useQuery({ queryKey: ["sessions"], queryFn: listSessions });
   const toolNames = useMemo(() => toolNamesFromSession(detail.data), [detail.data]);
   const schemas = useQuery({
     queryKey: ["tool-schemas", sessionId, toolNames],
@@ -605,6 +633,18 @@ export function SessionDetailPage() {
     queryFn: () => getToolSchemas(sessionId, toolNames),
     enabled: toolNames.length > 0,
   });
+  const subagentsByOwnerToolCallId = useMemo(() => {
+    if (!detail.data) {
+      return undefined;
+    }
+    return indexSubagentRecords(
+      tintinwebSubagentShim.fromSession?.(detail.data, sessions.data ?? []) ?? [],
+    );
+  }, [detail.data, sessions.data]);
+  const indexedSessionIds = useMemo(
+    () => new Set((sessions.data ?? []).map((session) => session.id)),
+    [sessions.data],
+  );
 
   return (
     <SessionDetailView
@@ -613,6 +653,11 @@ export function SessionDetailPage() {
       isLoading={detail.isLoading}
       isError={detail.isError}
       toolSchemas={schemas.data?.schemas}
+      subagentsByOwnerToolCallId={subagentsByOwnerToolCallId}
+      indexedSessionIds={indexedSessionIds}
+      onOpenChildSession={(childSessionId) => {
+        void navigate({ to: "/sessions/$sessionId", params: { sessionId: childSessionId } });
+      }}
     />
   );
 }

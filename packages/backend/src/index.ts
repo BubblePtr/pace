@@ -77,4 +77,10 @@ export {
   type SessionFilesReaderOptions,
 } from "./workspace/session-files";
 
+export {
+  createTintinwebSubagentShim,
+  tintinwebSubagentShim,
+} from "./subagent/tintinweb";
+export type { SubagentShim, SubagentShimContext, PiEventBus } from "./subagent/shim";
+
 export { migrateDataDir } from "./persistence/session-event-journal";

@@ -181,7 +181,7 @@ Agent Workspace 中一次可运行、可停止、可观察的 Pi Runtime 实例�
 _Avoid_: Workspace, model, task label, active run, agent loop run
 
 **Subagent**:
-由插件在根 Session 下创建和管理的子代理。主 Agent 通过插件工具委派、继续或取消任务，插件负责子会话的创建、运行、保留复用和释放。后台子代理可以在父 Active Run 完成后继续执行；任务完成不等于子会话销毁。用户主要通过主 Session 获取结果，不要求把每个子代理作为单独管理或观测的对象。它不是侧栏中的另一条根 Session，也不意味着独立操作系统进程。
+由插件在根 Session 下创建和管理的子代理。主 Agent 通过插件工具委派、继续或取消任务，插件负责子会话的创建、运行、保留复用和释放。后台子代理可以在父 Active Run 完成后继续执行；任务完成不等于子会话销毁。用户主要通过主 Session 获取结果，不要求把每个子代理作为单独管理或观测的对象。它不是侧栏中的另一条根 Session，也不意味着独立操作系统进程。当父会话 `Agent` 工具步骤能解析到已扫描的子会话 JSONL 时，Trajectory Inspector 可以打开该子 Session 回放。
 _Avoid_: fork, detached process, Active Run
 
 **Active Run**:

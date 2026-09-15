@@ -1173,6 +1173,72 @@ describe("Runtime Gateway client", () => {
     expect(observed).not.toHaveBeenCalled();
   });
 
+  it("keeps contract subagent events out of chat while delivering them to the agent stream", async () => {
+    let receive: ((event: BackendRpcEvent) => void) | undefined;
+    const event: RuntimeGatewayEventEnvelope = {
+      id: "subagent-1",
+      seq: 1,
+      sessionId: "session-1",
+      piSessionId: "pi-session-1",
+      type: "subagent",
+      ts: "2026-09-15T12:00:00Z",
+      payload: {
+        type: "subagent",
+        phase: "start",
+        surface: "hidden",
+        origin: "sdk",
+        record: {
+          childSessionId: "child-1",
+          parentSessionId: "pi-session-1",
+          ownerToolCallId: "call-1",
+          state: "started",
+          source: "tintinweb",
+          createdAt: "2026-09-15T12:00:00Z",
+          updatedAt: "2026-09-15T12:00:00Z",
+        },
+      },
+    };
+    const snapshot: RuntimeGatewaySnapshot = {
+      sessionId: "session-1",
+      runtimeId: "runtime-1",
+      piSessionId: "pi-session-1",
+      projectId: "p",
+      cwd: "/repo",
+      status: "idle",
+      events: [event],
+      updatedAt: event.ts,
+    };
+    const client = createRuntimeGatewayClient({
+      invoke: async <T,>() => snapshot as T,
+      onBackendEvent: (handler) => {
+        receive = handler;
+        return vi.fn();
+      },
+    });
+    const runtime = await client.startRuntime({
+      sessionId: "session-1",
+      projectId: "p",
+      checkout: { mode: "foreground-local", root: "/repo", runtimeCwd: "/repo" },
+    });
+    const state = await client.createPiSessionState({
+      runtimeId: runtime.runtimeId,
+      projectId: "p",
+      cwd: "/repo",
+    });
+    expect(state.events).toEqual([]);
+    const chat = vi.fn();
+    const agent = vi.fn();
+    client.subscribeToEvents("pi-session-1", chat);
+    client.subscribeToAgentEvents?.("pi-session-1", agent);
+    receive?.({ type: "event", event });
+    expect(chat).not.toHaveBeenCalled();
+    expect(agent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({ type: "subagent", surface: "hidden" }),
+      }),
+    );
+  });
+
   it("keeps session metadata out of agent and chat timelines", async () => {
     let receive: ((event: BackendRpcEvent) => void) | undefined;
     const snapshot: RuntimeGatewaySnapshot = { sessionId: "session-1", runtimeId: "runtime-1", piSessionId: "pi-session-1", projectId: "p", cwd: "/repo", status: "idle", events: [], updatedAt: "2026-09-07T00:00:00Z" };

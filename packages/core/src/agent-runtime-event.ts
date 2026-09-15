@@ -3,6 +3,7 @@
 // never from renderer guesses. See docs/adr/0020-agent-runtime-event-model.md.
 
 import type { RuntimeContextUsage, RuntimeGatewaySummary } from "./runtime-gateway";
+import type { SubagentEventPhase, SubagentRecord } from "./subagent";
 
 export type AgentRunPhase = "start" | "update" | "end";
 
@@ -158,6 +159,17 @@ export type AgentRuntimeEvent =
       followUp: string[];
       surface: "hidden";
       origin: AgentEventOrigin;
+    }
+  // Plugin-owned child conversation. Hidden: never a chat bubble or Trajectory
+  // row. Consumers join it to the parent Agent Tool Call by ownerToolCallId.
+  | {
+      type: "subagent";
+      phase: SubagentEventPhase;
+      record: SubagentRecord;
+      surface: "hidden";
+      origin: AgentEventOrigin;
+      runId?: string;
+      turnId?: string;
     };
 
 // Surface routing — the single source of truth. Page components must not

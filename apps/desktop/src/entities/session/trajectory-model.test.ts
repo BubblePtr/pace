@@ -65,6 +65,7 @@ describe("buildTrajectoryTurns", () => {
     expect(step.isError).toBe(false);
     expect(step.isRunning).toBe(false);
     expect(step.durationMs).toBe(340);
+    expect(step.toolCallId).toBe("call_1");
   });
 
   it("keeps an unmatched toolCall in the running state", () => {

@@ -1238,4 +1238,74 @@ describe("Pi SDK public runtime adapter", () => {
     expect(session.getToolDefinition).toHaveBeenCalledWith("bash");
     expect(session.getToolDefinition).toHaveBeenCalledWith("gone_tool");
   });
+
+  it("emits hidden subagent records from tintinweb pi.events correlated with Agent tool calls", async () => {
+    const sessionListeners: Array<(event: unknown) => void> = [];
+    const eventListeners = new Map<string, Set<(data: unknown) => void>>();
+    const eventBus = {
+      on(channel: string, handler: (data: unknown) => void) {
+        const set = eventListeners.get(channel) ?? new Set();
+        set.add(handler);
+        eventListeners.set(channel, set);
+        return () => set.delete(handler);
+      },
+    };
+    const session = {
+      sessionId: "parent-1",
+      isStreaming: false,
+      messages: [],
+      prompt: vi.fn(async () => {}),
+      abort: vi.fn(async () => {}),
+      dispose: vi.fn(),
+      subscribe(listener: (event: unknown) => void) {
+        sessionListeners.push(listener);
+        return vi.fn();
+      },
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: vi.fn(async () => ({ session })) },
+      sessionOptions: { resourceLoader: { eventBus } },
+      now: () => "2026-09-15T12:00:00.000Z",
+    })({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    const events: Array<{ type?: string; payload?: Record<string, unknown> }> = [];
+    runtime.onEvent?.((event) => events.push(event as { type?: string; payload?: Record<string, unknown> }));
+
+    for (const listener of sessionListeners) {
+      listener({
+        type: "tool_execution_start",
+        toolCallId: "call-agent",
+        toolName: "Agent",
+        args: { subagent_type: "Explore", prompt: "look", description: "Look" },
+      });
+    }
+    for (const handler of eventListeners.get("subagents:started") ?? []) {
+      handler({ id: "ag-1", type: "Explore", description: "Look" });
+    }
+    for (const handler of eventListeners.get("subagents:completed") ?? []) {
+      handler({
+        id: "ag-1",
+        usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0.001 } },
+        sessionFile: "/sessions/child-1.jsonl",
+      });
+    }
+
+    const subagentEvents = events.filter((event) => event.type === "subagent");
+    expect(subagentEvents[0]?.payload).toMatchObject({
+      type: "subagent",
+      phase: "start",
+      surface: "hidden",
+      origin: "sdk",
+      record: {
+        parentSessionId: "parent-1",
+        ownerToolCallId: "call-agent",
+        sourceAgentId: "ag-1",
+        state: "started",
+        source: "tintinweb",
+      },
+    });
+    expect(subagentEvents.at(-1)?.payload).toMatchObject({
+      phase: "end",
+      record: { state: "completed", childSessionId: "child-1" },
+    });
+  });
 });

@@ -30,7 +30,7 @@ import {
   type SegmentRange,
   type StripWidthMode,
 } from "@/shared/ui/pi-trajectory-strip";
-import { buildTrajectoryRuns, buildTrajectoryTurns } from "@/entities/session/trajectory-model";
+import { buildTrajectoryRuns, buildTrajectoryTurns, type TrajectoryStep } from "@/entities/session/trajectory-model";
 import type { SessionTurn } from "@pace/core";
 import { ChatChainOfThought } from "@/shared/ui/chat/chat-chain-of-thought";
 import { ChatInlinePager } from "@/shared/ui/chat/chat-inline-pager";
@@ -954,6 +954,16 @@ function PiTrajectoryStripGallery() {
 function PiTrajectoryInspectorGallery() {
   const errorStep = trajectoryTurns[1].steps.find((step) => step.isError);
   const [tab, setTab] = useState<TrajectoryInspectorTab>("Summary");
+  const agentStep: TrajectoryStep = {
+    id: "agent-child",
+    turnIndex: 1,
+    stepIndex: 0,
+    kind: "tool",
+    name: "Agent",
+    target: "Explore",
+    argsText: '{"subagent_type":"Explore","prompt":"look around"}',
+    output: "Agent ID: ag-1",
+  };
 
   return (
     <GallerySection title="PiTrajectoryInspector">
@@ -984,6 +994,33 @@ function PiTrajectoryInspectorGallery() {
               }}
               step={trajectoryTurns[1].steps[1]}
               tab="Schema"
+              turn={trajectoryTurns[1]}
+              onClose={() => {}}
+              onTabChange={() => {}}
+            />
+          </div>
+        </Variant>
+      </VariantRow>
+      <VariantRow>
+        <Variant caption="Agent step — Open child session enabled when the child JSONL is indexed">
+          <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
+            <PiTrajectoryInspector
+              childSession={{ id: "child-1", isAvailable: true }}
+              step={agentStep}
+              tab="Summary"
+              turn={trajectoryTurns[1]}
+              onClose={() => {}}
+              onOpenChildSession={() => {}}
+              onTabChange={() => {}}
+            />
+          </div>
+        </Variant>
+        <Variant caption="Agent step — Open child session disabled when the child JSONL is missing">
+          <div className="h-96 w-96 overflow-hidden rounded-md border border-separator">
+            <PiTrajectoryInspector
+              childSession={{ id: "child-missing", isAvailable: false }}
+              step={agentStep}
+              tab="Summary"
               turn={trajectoryTurns[1]}
               onClose={() => {}}
               onTabChange={() => {}}
