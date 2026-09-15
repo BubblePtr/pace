@@ -446,4 +446,42 @@ describe("SessionDetailView (Trajectory Cockpit)", () => {
     await user.click(screen.getAllByRole("button", { name: /read_file/ })[0]);
     expect(screen.queryByTestId("open-child-session")).not.toBeInTheDocument();
   });
+
+  it("shows send/stop on an Agent step when the live record advertises them", async () => {
+    const user = userEvent.setup();
+    const onSendToChild = vi.fn();
+    const onStopChild = vi.fn();
+    render(
+      <SessionDetailView
+        indexedSessionIds={new Set(["child-1"])}
+        session={agentToolSession()}
+        sessionId="parent-session"
+        subagentsByOwnerToolCallId={
+          new Map([
+            [
+              "call-agent",
+              {
+                ...agentSubagentRecord(),
+                state: "started",
+                capabilities: { send: true, stop: true },
+                sourceAgentId: "ag-1",
+              },
+            ],
+          ])
+        }
+        onSendToChild={onSendToChild}
+        onStopChild={onStopChild}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Agent/ }));
+    await user.type(screen.getByTestId("send-to-child-input"), "nudge");
+    await user.click(screen.getByTestId("send-to-child"));
+    expect(onSendToChild).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceAgentId: "ag-1" }),
+      "nudge",
+    );
+    await user.click(screen.getByTestId("stop-child"));
+    expect(onStopChild).toHaveBeenCalled();
+  });
 });

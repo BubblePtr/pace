@@ -104,3 +104,41 @@ export function lookupSubagentByOwnerToolCallId(
   }
   return lookup.get(ownerToolCallId);
 }
+
+export type SubagentControlId = {
+  childSessionId?: string;
+  sourceAgentId?: string;
+};
+
+/** True when the record advertised this optional control. Absent flags mean no. */
+export function subagentAdvertisesControl(
+  record: SubagentRecord | undefined,
+  control: keyof SubagentCapabilities,
+): boolean {
+  return record?.capabilities?.[control] === true;
+}
+
+/**
+ * Resolve a send/stop target from live records. `sourceAgentId` wins when both
+ * are present so a host can name the plugin id even after a new child session.
+ */
+export function lookupSubagentByControlId(
+  records: Iterable<SubagentRecord>,
+  target: SubagentControlId,
+): SubagentRecord | undefined {
+  const sourceAgentId = target.sourceAgentId?.trim();
+  const childSessionId = target.childSessionId?.trim();
+  if (!sourceAgentId && !childSessionId) {
+    return undefined;
+  }
+  let byChild: SubagentRecord | undefined;
+  for (const record of records) {
+    if (sourceAgentId && record.sourceAgentId === sourceAgentId) {
+      return record;
+    }
+    if (childSessionId && record.childSessionId === childSessionId) {
+      byChild = record;
+    }
+  }
+  return byChild;
+}

@@ -26,6 +26,14 @@ git:github.com/tintinweb/pi-subagents@e955e29c51b7a6cce37e1108cd2d6c57a77e151c
 
 选中父会话里的 `Agent` 步骤时，Inspector 可提供「Open child session」：Pace 用 tintinweb 映射把插件 `id` / `sessionFile` 和父 `toolCallId` 收成隐藏的 `SubagentRecord`（`AgentRuntimeEvent` `type: "subagent"`，`surface: "hidden"`），不进 Live Chat、也不多出 Trajectory 行。子 JSONL 不在 `list_sessions` 中时按钮禁用，不是错误。CLI 录制的父 JSONL 在 `get_session_detail`（`workspace/sessions.ts`）里走同一映射的冷扫描，记录挂在 `SessionDetail.subagents` 上返回。仍不提供 Subagents Dock、逐节点费用或子会话实时 Trace。
 
+## Control
+
+`send` 和 `stop` 是记录上的可选能力。Runtime Gateway 提供 `send_subagent` / `stop_subagent`（参数为根 `sessionId`/`piSessionId` 加 `childSessionId` 或 `sourceAgentId`），错误形状与 `steer_run` / `stop_run` 相同。未广告该能力时拒绝，不调用 shim。父会话 Stop 仍只 abort 当前 Active Run（ADR-0040），不会级联停止子代理。
+
+Tintinweb 活记录仅在 `pi.events.emit` 可用时广告 `{ send: true, stop: true }`。Stop 走文档化的 `subagents:rpc:stop`。Send 优先 `Symbol.for("pi-subagents:manager").getRecord` + `session.steer`（与 `steer_subagent` 同一机制）；没有 in-process manager 时再试 `subagents:rpc:steer`（当前上游没有该通道）。不复活 `subagents:host:ready`，也不由 Pace 生成子代理。已结束的子会话若 tintinweb 再次 `subagents:started`，shim 发 `phase: "update"`，UI 不伪造该跃迁。冷 JSONL `fromSession` 不广告控制。
+
+Trajectory Inspector 在记录广告对应能力、且状态说得通时显示 “Send to child” / “Stop child”。该页接入 runtime model 的 `subagentsByOwnerToolCallId`（slice 1 的 live follow-up），与冷扫描合并，live 覆盖 cold。
+
 ## 验证
 
 ```sh

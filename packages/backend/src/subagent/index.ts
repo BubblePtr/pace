@@ -1,4 +1,4 @@
-export type { PiEventBus, SubagentShim, SubagentShimContext } from "./shim";
+export type { PiEventBus, SubagentShim, SubagentShimContext, SubagentSendInput, SubagentStopInput } from "./shim";
 export {
   childSessionIdFromSessionFile,
   createTintinwebSubagentShim,

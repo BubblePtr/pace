@@ -2216,3 +2216,154 @@ it("persists plugin names without replacing manual titles or changing activity t
   await gateway.handleRequest({ id: "flush", method: "list_session_projections", params: {} });
   expect(await projections.get("named")).toMatchObject({ title: "Manual title", sessionName: "Auto title", updatedAt: before.updatedAt });
 });
+
+describe("send_subagent / stop_subagent", () => {
+  function childRecord(overrides: Record<string, unknown> = {}) {
+    return {
+      childSessionId: "child-1",
+      parentSessionId: "pi-session-1",
+      ownerToolCallId: "call-agent",
+      state: "started",
+      source: "tintinweb",
+      createdAt: "2026-09-15T12:00:00.000Z",
+      updatedAt: "2026-09-15T12:00:00.000Z",
+      sourceAgentId: "ag-1",
+      capabilities: { send: true, stop: true },
+      ...overrides,
+    };
+  }
+
+  async function liveGateway() {
+    const base = createFakeRuntimeDriver();
+    const sendSubagent = vi.fn(async () => ({ ok: true as const }));
+    const stopSubagent = vi.fn(async () => ({ ok: true as const }));
+    const stopRun = vi.spyOn(base, "stopRun");
+    const driver = { ...base, sendSubagent, stopSubagent };
+    const journal = createInMemorySessionEventJournal();
+    const projections = createInMemorySessionProjectionStore();
+    const service = createRuntimeGatewayService({ driver, journal, projections });
+    await service.handleRequest({
+      id: "create",
+      method: "create_session",
+      params: { sessionId: "app-session-1", projectId: "p", cwd: "/repo" },
+    });
+    return { service, driver, sendSubagent, stopSubagent, stopRun };
+  }
+
+  it("routes send and stop to the driver when the record advertised the control", async () => {
+    const { service, driver, sendSubagent, stopSubagent } = await liveGateway();
+    driver.emitDriverEvent({
+      piSessionId: "pi-session-1",
+      type: "subagent",
+      payload: { type: "subagent", phase: "start", record: childRecord(), surface: "hidden", origin: "sdk" },
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "send",
+        method: "send_subagent",
+        params: { sessionId: "pi-session-1", sourceAgentId: "ag-1", text: "nudge" },
+      }),
+    ).resolves.toMatchObject({ result: { ok: true } });
+    await expect(
+      service.handleRequest({
+        id: "stop",
+        method: "stop_subagent",
+        params: { piSessionId: "pi-session-1", childSessionId: "child-1" },
+      }),
+    ).resolves.toMatchObject({ result: { ok: true } });
+
+    expect(sendSubagent).toHaveBeenCalledWith({
+      piSessionId: "pi-session-1",
+      sourceAgentId: "ag-1",
+      text: "nudge",
+    });
+    expect(stopSubagent).toHaveBeenCalledWith({
+      piSessionId: "pi-session-1",
+      childSessionId: "child-1",
+    });
+  });
+
+  it("rejects send/stop when the source did not advertise the control", async () => {
+    const { service, driver, sendSubagent, stopSubagent } = await liveGateway();
+    driver.emitDriverEvent({
+      piSessionId: "pi-session-1",
+      type: "subagent",
+      payload: {
+        type: "subagent",
+        phase: "start",
+        record: childRecord({ capabilities: {} }),
+        surface: "hidden",
+        origin: "sdk",
+      },
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "send",
+        method: "send_subagent",
+        params: { piSessionId: "pi-session-1", sourceAgentId: "ag-1", text: "nudge" },
+      }),
+    ).resolves.toMatchObject({ error: "This subagent does not advertise send." });
+    await expect(
+      service.handleRequest({
+        id: "stop",
+        method: "stop_subagent",
+        params: { piSessionId: "pi-session-1", sourceAgentId: "ag-1" },
+      }),
+    ).resolves.toMatchObject({ error: "This subagent does not advertise stop." });
+    expect(sendSubagent).not.toHaveBeenCalled();
+    expect(stopSubagent).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing child identity, unknown child, and missing driver methods", async () => {
+    const driver = createFakeRuntimeDriver();
+    const service = createRuntimeGatewayService({ driver });
+    await service.handleRequest({
+      id: "create",
+      method: "create_session",
+      params: { sessionId: "app-session-1", projectId: "p", cwd: "/repo" },
+    });
+
+    await expect(
+      service.handleRequest({
+        id: "send",
+        method: "send_subagent",
+        params: { piSessionId: "pi-session-1", text: "nudge" },
+      }),
+    ).resolves.toMatchObject({ error: "childSessionId or sourceAgentId is required" });
+    await expect(
+      service.handleRequest({
+        id: "send-unknown",
+        method: "send_subagent",
+        params: { piSessionId: "pi-session-1", sourceAgentId: "ag-1", text: "nudge" },
+      }),
+    ).resolves.toMatchObject({ error: 'Subagent "ag-1" was not found for this session.' });
+
+    driver.emitDriverEvent({
+      piSessionId: "pi-session-1",
+      type: "subagent",
+      payload: { type: "subagent", phase: "start", record: childRecord(), surface: "hidden", origin: "sdk" },
+    });
+    await expect(
+      service.handleRequest({
+        id: "send-ok-ids",
+        method: "send_subagent",
+        params: { piSessionId: "pi-session-1", sourceAgentId: "ag-1", text: "nudge" },
+      }),
+    ).resolves.toMatchObject({ error: 'Runtime driver does not support "send_subagent".' });
+  });
+
+  it("leaves parent stop_run on the parent abort path", async () => {
+    const { service, stopRun, stopSubagent } = await liveGateway();
+    const response = await service.handleRequest({
+      id: "parent-stop",
+      method: "stop_run",
+      params: { piSessionId: "pi-session-1" },
+    });
+    expect(response.error).toBeUndefined();
+    expect(stopRun).toHaveBeenCalledWith({ piSessionId: "pi-session-1" });
+    expect(stopSubagent).not.toHaveBeenCalled();
+  });
+});
+

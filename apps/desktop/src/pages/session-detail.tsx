@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@/shared/runtime";
+import { invoke, onBackendEvent } from "@/shared/runtime";
 import {
   buildTrajectoryRuns,
   buildTrajectoryTurns,
@@ -26,8 +26,24 @@ import {
   type StripSegment,
   type StripWidthMode,
 } from "@/shared/ui/pi-trajectory-strip";
-import type { RuntimeToolSchemas, SessionDetail, SessionTurn, SubagentLookup } from "@pace/core";
-import { indexSubagentRecords, lookupSubagentByOwnerToolCallId } from "@pace/core";
+import type {
+  AgentRuntimeEvent,
+  RuntimeGatewaySnapshot,
+  RuntimeToolSchemas,
+  SessionDetail,
+  SessionTurn,
+  SubagentLookup,
+  SubagentRecord,
+} from "@pace/core";
+import {
+  applySubagentRecord,
+  indexSubagentRecords,
+  lookupSubagentByOwnerToolCallId,
+} from "@pace/core";
+import {
+  applyAgentRuntimeEvent,
+  createSessionRuntimeModel,
+} from "@/entities/session/session-runtime-model";
 import { listSessions } from "@/entities/session/sessions";
 
 export type {
@@ -64,6 +80,78 @@ function getToolSchemas(piSessionId: string, names: string[]) {
     piSessionId,
     names,
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function subagentEventFromPayload(payload: Record<string, unknown>): AgentRuntimeEvent | undefined {
+  if (payload.type !== "subagent" || !isRecord(payload.record)) {
+    return undefined;
+  }
+  return payload as AgentRuntimeEvent;
+}
+
+function mergeSubagentLookups(cold: SubagentLookup, live: SubagentLookup): Map<string, SubagentRecord> {
+  const merged = new Map(cold);
+  for (const record of live.values()) {
+    applySubagentRecord(merged, record);
+  }
+  return merged;
+}
+
+function useLiveSubagentLookup(piSessionId: string): SubagentLookup {
+  const [lookup, setLookup] = useState<SubagentLookup>(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    let model = createSessionRuntimeModel();
+
+    const commit = () => {
+      if (!cancelled) {
+        setLookup(model.subagentsByOwnerToolCallId);
+      }
+    };
+
+    const applyPayload = (payload: Record<string, unknown>, seq: number, timestamp: string) => {
+      const event = subagentEventFromPayload(payload);
+      if (!event) {
+        return;
+      }
+      model = applyAgentRuntimeEvent(model, { event, seq, timestamp });
+      commit();
+    };
+
+    void invoke<RuntimeGatewaySnapshot>("get_runtime_snapshot", { piSessionId })
+      .then((snapshot) => {
+        if (cancelled) {
+          return;
+        }
+        for (const envelope of snapshot.events ?? []) {
+          applyPayload(envelope.payload, envelope.seq, envelope.ts);
+        }
+      })
+      .catch(() => {});
+
+    const unsubscribe = onBackendEvent((backendEvent) => {
+      if (backendEvent.type !== "event") {
+        return;
+      }
+      const envelope = backendEvent.event;
+      if (envelope.piSessionId !== piSessionId) {
+        return;
+      }
+      applyPayload(envelope.payload, envelope.seq, envelope.ts);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [piSessionId]);
+
+  return lookup;
 }
 
 function toolNamesFromSession(session?: SessionDetail) {
@@ -147,6 +235,8 @@ export function SessionDetailView({
   subagentsByOwnerToolCallId,
   indexedSessionIds,
   onOpenChildSession,
+  onSendToChild,
+  onStopChild,
 }: {
   session?: SessionDetail;
   sessionId: string;
@@ -156,6 +246,8 @@ export function SessionDetailView({
   subagentsByOwnerToolCallId?: SubagentLookup;
   indexedSessionIds?: ReadonlySet<string>;
   onOpenChildSession?: (sessionId: string) => void;
+  onSendToChild?: (record: SubagentRecord, text: string) => Promise<void> | void;
+  onStopChild?: (record: SubagentRecord) => Promise<void> | void;
 }) {
   const turns = useMemo(() => buildTrajectoryTurns(session?.turns ?? []), [session?.turns]);
   const runs = useMemo(() => buildTrajectoryRuns(turns), [turns]);
@@ -587,6 +679,7 @@ export function SessionDetailView({
           <aside className="shrink-0 bg-surface" style={{ width: inspectorWidth }}>
             {selectedStep && selectedTurn ? (
               <PiTrajectoryInspector
+                childRecord={selectedSubagent}
                 childSession={childSession}
                 schema={selectedStep.name ? toolSchemas?.[selectedStep.name] : undefined}
                 step={selectedStep}
@@ -596,6 +689,16 @@ export function SessionDetailView({
                 onOpenChildSession={
                   childSession
                     ? () => onOpenChildSession?.(childSession.id)
+                    : undefined
+                }
+                onSendToChild={
+                  selectedSubagent && onSendToChild
+                    ? (text) => onSendToChild(selectedSubagent, text)
+                    : undefined
+                }
+                onStopChild={
+                  selectedSubagent && onStopChild
+                    ? () => onStopChild(selectedSubagent)
                     : undefined
                 }
                 onTabChange={setTab}
@@ -632,10 +735,11 @@ export function SessionDetailPage() {
     queryFn: () => getToolSchemas(sessionId, toolNames),
     enabled: toolNames.length > 0,
   });
-  const subagentsByOwnerToolCallId = useMemo(
-    () => indexSubagentRecords(detail.data?.subagents ?? []),
-    [detail.data],
-  );
+  const liveSubagents = useLiveSubagentLookup(sessionId);
+  const subagentsByOwnerToolCallId = useMemo(() => {
+    const cold = indexSubagentRecords(detail.data?.subagents ?? []);
+    return mergeSubagentLookups(cold, liveSubagents);
+  }, [detail.data, liveSubagents]);
   const indexedSessionIds = useMemo(
     () => new Set((sessions.data ?? []).map((session) => session.id)),
     [sessions.data],
@@ -653,6 +757,21 @@ export function SessionDetailPage() {
       onOpenChildSession={(childSessionId) => {
         void navigate({ to: "/sessions/$sessionId", params: { sessionId: childSessionId } });
       }}
+      onSendToChild={(record, text) =>
+        invoke("send_subagent", {
+          piSessionId: sessionId,
+          ...(record.sourceAgentId ? { sourceAgentId: record.sourceAgentId } : {}),
+          ...(record.childSessionId ? { childSessionId: record.childSessionId } : {}),
+          text,
+        })
+      }
+      onStopChild={(record) =>
+        invoke("stop_subagent", {
+          piSessionId: sessionId,
+          ...(record.sourceAgentId ? { sourceAgentId: record.sourceAgentId } : {}),
+          ...(record.childSessionId ? { childSessionId: record.childSessionId } : {}),
+        })
+      }
     />
   );
 }

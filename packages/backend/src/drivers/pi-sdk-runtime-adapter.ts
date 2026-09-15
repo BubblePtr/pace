@@ -800,7 +800,7 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
     });
-    const unsubscribeSubagentShim = createTintinwebSubagentShim({
+    const subagentShim = createTintinwebSubagentShim({
       events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
       subscribeSession: (listener) => {
         sessionEventListeners.add(listener);
@@ -810,7 +810,8 @@ async function createPublicPiSdkRuntime(context: {
       },
       now,
       resolveChildSessionId: childSessionIdFromSessionFileHeader,
-    }).observe({
+    });
+    const unsubscribeSubagentShim = subagentShim.observe({
       parentSessionId: session.sessionId,
       onRecord(record, phase) {
         emit({
@@ -883,6 +884,20 @@ async function createPublicPiSdkRuntime(context: {
       },
       async resolveToolSchemas(names) {
         return { schemas: schemasFromSession(session, names) };
+      },
+      async sendSubagent(input) {
+        assertOpen();
+        if (!subagentShim.send) {
+          throw new Error("This runtime has no subagent send adapter.");
+        }
+        await subagentShim.send(input);
+      },
+      async stopSubagent(input) {
+        assertOpen();
+        if (!subagentShim.stop) {
+          throw new Error("This runtime has no subagent stop adapter.");
+        }
+        await subagentShim.stop(input);
       },
       onEvent(listener) {
         listeners.add(listener);

@@ -57,6 +57,12 @@ export type PiSdkSessionRuntime = {
   withdrawQueuedMessage?(queuedMessageId: string): Promise<PiSdkQueuedMessage>;
   steerRun?(message: string, images?: RuntimePromptImage[]): Promise<void>;
   stopRun?(): Promise<void>;
+  sendSubagent?(input: {
+    childSessionId?: string;
+    sourceAgentId?: string;
+    text: string;
+  }): Promise<void>;
+  stopSubagent?(input: { childSessionId?: string; sourceAgentId?: string }): Promise<void>;
   configureModel?(selection: RuntimeModelSelection): Promise<RuntimeModelControls>;
   resolveToolSchemas?(names: string[]): Promise<RuntimeToolSchemas>;
   getSnapshot?(): Promise<PiSdkSnapshotPatch>;
@@ -460,6 +466,31 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
           body: "Pi stopped the active run.",
         },
       };
+    },
+
+    async sendSubagent(input) {
+      const runtime = runtimeFor(input.piSessionId, "send_subagent");
+      if (!runtime.sendSubagent) {
+        unsupported("send_subagent", "the injected SDK runtime has no sendSubagent adapter");
+      }
+      await runtime.sendSubagent({
+        text: input.text,
+        ...(input.childSessionId ? { childSessionId: input.childSessionId } : {}),
+        ...(input.sourceAgentId ? { sourceAgentId: input.sourceAgentId } : {}),
+      });
+      return { ok: true as const };
+    },
+
+    async stopSubagent(input) {
+      const runtime = runtimeFor(input.piSessionId, "stop_subagent");
+      if (!runtime.stopSubagent) {
+        unsupported("stop_subagent", "the injected SDK runtime has no stopSubagent adapter");
+      }
+      await runtime.stopSubagent({
+        ...(input.childSessionId ? { childSessionId: input.childSessionId } : {}),
+        ...(input.sourceAgentId ? { sourceAgentId: input.sourceAgentId } : {}),
+      });
+      return { ok: true as const };
     },
 
     async configureModel(input) {

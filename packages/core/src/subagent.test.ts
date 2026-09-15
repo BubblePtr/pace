@@ -4,7 +4,9 @@ import {
   emptySubagentLookup,
   indexSubagentRecords,
   isSettledSubagentState,
+  lookupSubagentByControlId,
   lookupSubagentByOwnerToolCallId,
+  subagentAdvertisesControl,
   subagentPhaseForTransition,
   type SubagentRecord,
 } from "./subagent";
@@ -75,5 +77,34 @@ describe("subagent lookup", () => {
     expect(lookup.get("call-1")?.state).toBe("started");
     expect(lookup.get("call-resume")?.state).toBe("started");
     expect(lookup.get("call-1")?.ownerToolCallId).toBe("call-resume");
+  });
+
+  it("resolves control ids by sourceAgentId first, then childSessionId", () => {
+    const records = [
+      record({ sourceAgentId: "ag-1", childSessionId: "child-1" }),
+      record({
+        ownerToolCallId: "call-2",
+        sourceAgentId: "ag-2",
+        childSessionId: "child-2",
+      }),
+    ];
+    expect(lookupSubagentByControlId(records, { sourceAgentId: "ag-2" })?.ownerToolCallId).toBe(
+      "call-2",
+    );
+    expect(lookupSubagentByControlId(records, { childSessionId: "child-1" })?.sourceAgentId).toBe(
+      "ag-1",
+    );
+    expect(
+      lookupSubagentByControlId(records, { sourceAgentId: "ag-2", childSessionId: "child-1" })
+        ?.sourceAgentId,
+    ).toBe("ag-2");
+    expect(lookupSubagentByControlId(records, {})).toBeUndefined();
+  });
+
+  it("treats missing capability flags as unadvertised", () => {
+    expect(subagentAdvertisesControl(record(), "send")).toBe(false);
+    expect(subagentAdvertisesControl(record({ capabilities: { send: true } }), "send")).toBe(true);
+    expect(subagentAdvertisesControl(record({ capabilities: { send: true } }), "stop")).toBe(false);
+    expect(subagentAdvertisesControl(undefined, "stop")).toBe(false);
   });
 });

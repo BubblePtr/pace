@@ -6,8 +6,8 @@ import type {
   SubagentState,
   SubagentUsage,
 } from "@pace/core";
-import { isSettledSubagentState, subagentPhaseForTransition } from "@pace/core";
-import type { PiEventBus, SubagentShim, SubagentShimContext } from "./shim";
+import { isSettledSubagentState, lookupSubagentByControlId, subagentPhaseForTransition } from "@pace/core";
+import type { PiEventBus, SubagentSendInput, SubagentShim, SubagentShimContext, SubagentStopInput } from "./shim";
 
 const TINTINWEB_LIFECYCLE_EVENTS = [
   "subagents:created",
@@ -16,7 +16,10 @@ const TINTINWEB_LIFECYCLE_EVENTS = [
   "subagents:failed",
 ] as const;
 
+const TINTINWEB_MANAGER = Symbol.for("pi-subagents:manager");
 const TINTINWEB_CAPABILITIES = { send: true, stop: true } as const;
+const RPC_TIMEOUT_MS = 2_000;
+const STEER_RPC_TIMEOUT_MS = 50;
 
 export type TintinwebSubagentShimDeps = {
   events?: PiEventBus;
@@ -184,8 +187,119 @@ export function piEventBusFromUnknown(value: unknown): PiEventBus | undefined {
   return piEventBusFromUnknown(value.eventBus) ?? piEventBusFromUnknown(value._resourceLoader);
 }
 
+type TintinwebAgentSession = {
+  steer?: (message: string) => Promise<unknown>;
+  prompt?: (message: string) => Promise<unknown>;
+};
+
+type TintinwebAgentRecord = {
+  id?: string;
+  status?: string;
+  session?: TintinwebAgentSession;
+  pendingSteers?: string[];
+};
+
+type TintinwebManager = {
+  getRecord?: (id: string) => TintinwebAgentRecord | undefined;
+  steer?: (id: string, message: string) => boolean;
+  resume?: (
+    id: string,
+    prompt: string,
+    signal?: unknown,
+    options?: { isBackground?: boolean },
+  ) => Promise<unknown>;
+};
+
+function requestId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `rpc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function tintinwebManager(): TintinwebManager | undefined {
+  const value = (globalThis as Record<symbol, unknown>)[TINTINWEB_MANAGER];
+  return isRecord(value) ? (value as TintinwebManager) : undefined;
+}
+
+function controlBusAvailable(events: PiEventBus | undefined): events is PiEventBus & {
+  emit: (channel: string, data: unknown) => void;
+} {
+  return typeof events?.emit === "function";
+}
+
+function rpcCall(
+  events: PiEventBus & { emit: (channel: string, data: unknown) => void },
+  channel: string,
+  payload: Record<string, unknown>,
+  timeoutMs = RPC_TIMEOUT_MS,
+): Promise<unknown> {
+  const id = asString(payload.requestId) ?? requestId();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsubscribe();
+      const error = new Error(`No reply for ${channel}`);
+      (error as Error & { code: string }).code = "rpc_timeout";
+      reject(error);
+    }, timeoutMs);
+    const unsubscribe = events.on(`${channel}:reply:${id}`, (reply) => {
+      clearTimeout(timer);
+      unsubscribe();
+      if (isRecord(reply) && reply.success === false) {
+        const error = new Error(asString(reply.error) ?? "Request failed");
+        (error as Error & { code: string }).code = "rpc_error";
+        reject(error);
+        return;
+      }
+      resolve(isRecord(reply) ? reply.data : reply);
+    });
+    events.emit(channel, { ...payload, requestId: id });
+  });
+}
+
+function isRpcTimeout(error: unknown): boolean {
+  return isRecord(error) && error.code === "rpc_timeout";
+}
+
+function isActiveTintinwebStatus(status: string | undefined): boolean {
+  return status === undefined || status === "running" || status === "queued" || status === "created";
+}
+
+async function sendViaRegistry(agentId: string, text: string): Promise<boolean> {
+  const manager = tintinwebManager();
+  const record = manager?.getRecord?.(agentId);
+  if (!record) {
+    return false;
+  }
+  const status = asString(record.status)?.toLowerCase();
+  if (isActiveTintinwebStatus(status)) {
+    if (typeof manager?.steer === "function") {
+      if (!manager.steer(agentId, text)) {
+        throw new Error(`Agent "${agentId}" is not running.`);
+      }
+      return true;
+    }
+    if (typeof record.session?.steer === "function") {
+      await record.session.steer(text);
+      return true;
+    }
+    record.pendingSteers = record.pendingSteers ?? [];
+    record.pendingSteers.push(text);
+    return true;
+  }
+  if (typeof manager?.resume === "function") {
+    await manager.resume(agentId, text, undefined, { isBackground: true });
+    return true;
+  }
+  throw new Error(
+    `Cannot send to settled child "${agentId}": tintinweb did not expose resume on the in-process manager.`,
+  );
+}
+
 export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}): SubagentShim {
   const now = deps.now ?? (() => new Date().toISOString());
+  const records = new Map<string, SubagentRecord>();
+  const byToolCallId = new Map<string, SubagentRecord>();
+  const controlAvailable = controlBusAvailable(deps.events);
 
   const resolveChild = (sessionFile: string | undefined, index: readonly Pick<SessionSummary, "id">[]) =>
     childSessionIdFromSessionFile(sessionFile, index, deps.resolveChildSessionId);
@@ -237,7 +351,6 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
             ...(resumeId || existing?.sourceAgentId
               ? { sourceAgentId: resumeId ?? existing?.sourceAgentId }
               : {}),
-            capabilities: TINTINWEB_CAPABILITIES,
           };
           emitStored(record);
           continue;
@@ -293,7 +406,6 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
             ...(parsed.usage ?? existing?.usage ? { usage: parsed.usage ?? existing?.usage } : {}),
             startedAt: existing?.startedAt ?? stamp(turn.timestamp),
             ...(isSettledSubagentState(state) ? { endedAt: stamp(turn.timestamp) } : {}),
-            capabilities: TINTINWEB_CAPABILITIES,
             ...(parsed.sourceAgentId ?? existing?.sourceAgentId
               ? { sourceAgentId: parsed.sourceAgentId ?? existing?.sourceAgentId }
               : {}),
@@ -318,8 +430,8 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
   }
 
   function observe(ctx: SubagentShimContext): () => void {
-    const records = new Map<string, SubagentRecord>();
-    const byToolCallId = new Map<string, SubagentRecord>();
+    records.clear();
+    byToolCallId.clear();
     const pendingTools = new Map<string, PendingTool>();
     const unmatchedAgentIds: string[] = [];
     const unsubscribers: Array<() => void> = [];
@@ -375,7 +487,7 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
         ...(input.usage ?? existing?.usage ? { usage: input.usage ?? existing?.usage } : {}),
         ...(startedAt ? { startedAt } : {}),
         ...(isSettledSubagentState(input.state) ? { endedAt: at } : {}),
-        capabilities: TINTINWEB_CAPABILITIES,
+        ...(controlAvailable ? { capabilities: TINTINWEB_CAPABILITIES } : {}),
         ...(sourceAgentId ? { sourceAgentId } : {}),
         ...(sessionFile ? { sessionFile } : {}),
       };
@@ -530,10 +642,81 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
     };
   }
 
+  function liveRecords(): SubagentRecord[] {
+    const seen = new Set<SubagentRecord>();
+    const list: SubagentRecord[] = [];
+    for (const record of [...records.values(), ...byToolCallId.values()]) {
+      if (seen.has(record)) {
+        continue;
+      }
+      seen.add(record);
+      list.push(record);
+    }
+    return list;
+  }
+
+  function resolveLiveRecord(target: SubagentSendInput | SubagentStopInput): SubagentRecord {
+    const record = lookupSubagentByControlId(liveRecords(), target);
+    if (!record) {
+      const id = target.sourceAgentId ?? target.childSessionId ?? "";
+      throw new Error(`Subagent "${id || "unknown"}" was not found for this session.`);
+    }
+    return record;
+  }
+
+  function requireAgentId(record: SubagentRecord): string {
+    if (!record.sourceAgentId) {
+      throw new Error("This subagent has no plugin id to send or stop.");
+    }
+    return record.sourceAgentId;
+  }
+
+  async function send(input: SubagentSendInput): Promise<void> {
+    const text = input.text.trim();
+    if (!text) {
+      throw new Error("text is required");
+    }
+    const record = resolveLiveRecord(input);
+    if (record.capabilities?.send !== true) {
+      throw new Error("This subagent does not advertise send.");
+    }
+    const agentId = requireAgentId(record);
+    if (await sendViaRegistry(agentId, text)) {
+      return;
+    }
+    if (!controlBusAvailable(deps.events)) {
+      throw new Error("Tintinweb subagent send is not available on this session.");
+    }
+    try {
+      await rpcCall(deps.events, "subagents:rpc:steer", { agentId, message: text }, STEER_RPC_TIMEOUT_MS);
+    } catch (error) {
+      if (!isRpcTimeout(error)) {
+        throw error;
+      }
+      throw new Error(
+        `Cannot send to child "${agentId}": tintinweb has no steer RPC and the in-process manager did not know this agent.`,
+      );
+    }
+  }
+
+  async function stop(input: SubagentStopInput): Promise<void> {
+    const record = resolveLiveRecord(input);
+    if (record.capabilities?.stop !== true) {
+      throw new Error("This subagent does not advertise stop.");
+    }
+    if (!controlBusAvailable(deps.events)) {
+      throw new Error("Tintinweb subagent stop is not available on this session.");
+    }
+    const agentId = requireAgentId(record);
+    await rpcCall(deps.events, "subagents:rpc:stop", { agentId });
+  }
+
   return {
     source: "tintinweb",
     observe,
     fromSession,
+    send,
+    stop,
   };
 }
 

@@ -1,6 +1,8 @@
 import type { ComponentProps } from "react";
+import { useState } from "react";
 import { formatToolDuration } from "@/shared/ui/chat/chat-tool";
 import type { RuntimeToolSchema } from "@pace/core";
+import { isSettledSubagentState, type SubagentRecord } from "@pace/core";
 import type { TrajectoryStep, TrajectoryTurn } from "@/entities/session/trajectory-model";
 import { TrajectoryStepBadge, trajectoryStepStatus, trajectoryStepType } from "@/shared/ui/pi-trajectory-ledger";
 
@@ -84,6 +86,10 @@ type PiTrajectoryInspectorOwnProps = {
    */
   childSession?: { id: string; isAvailable: boolean };
   onOpenChildSession?: () => void;
+  /** Live send/stop for a child the source advertised. */
+  childRecord?: SubagentRecord;
+  onSendToChild?: (text: string) => Promise<void> | void;
+  onStopChild?: () => Promise<void> | void;
 };
 
 export type PiTrajectoryInspectorProps = Omit<
@@ -101,10 +107,51 @@ export function PiTrajectoryInspector({
   schema,
   childSession,
   onOpenChildSession,
+  childRecord,
+  onSendToChild,
+  onStopChild,
   className,
   ...rest
 }: PiTrajectoryInspectorProps) {
   const status = trajectoryStepStatus(step);
+  const [draft, setDraft] = useState("");
+  const [controlError, setControlError] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState<"send" | "stop" | undefined>(undefined);
+  const canSend = childRecord?.capabilities?.send === true;
+  const canStop =
+    childRecord?.capabilities?.stop === true && !isSettledSubagentState(childRecord.state);
+
+  async function sendToChild() {
+    const text = draft.trim();
+    if (!text || !onSendToChild || busy) {
+      return;
+    }
+    setBusy("send");
+    setControlError(undefined);
+    try {
+      await onSendToChild(text);
+      setDraft("");
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function stopChild() {
+    if (!onStopChild || busy) {
+      return;
+    }
+    setBusy("stop");
+    setControlError(undefined);
+    try {
+      await onStopChild();
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(undefined);
+    }
+  }
 
   return (
     <div
@@ -177,26 +224,74 @@ export function PiTrajectoryInspector({
                 />
               </div>
             ) : null}
-            {childSession ? (
+            {childSession || canSend || canStop ? (
               <div className="mt-3 border-t border-border pt-3">
-                <button
-                  className={`text-xs ${
-                    childSession.isAvailable
-                      ? "cursor-pointer text-foreground underline-offset-2 hover:underline"
-                      : "cursor-not-allowed text-muted"
-                  }`}
-                  data-testid="open-child-session"
-                  disabled={!childSession.isAvailable}
-                  title={
-                    childSession.isAvailable
-                      ? `Open ${childSession.id}`
-                      : "Child session JSONL is not in the session index"
-                  }
-                  type="button"
-                  onClick={childSession.isAvailable ? onOpenChildSession : undefined}
-                >
-                  Open child session
-                </button>
+                {childSession ? (
+                  <button
+                    className={`text-xs ${
+                      childSession.isAvailable
+                        ? "cursor-pointer text-foreground underline-offset-2 hover:underline"
+                        : "cursor-not-allowed text-muted"
+                    }`}
+                    data-testid="open-child-session"
+                    disabled={!childSession.isAvailable}
+                    title={
+                      childSession.isAvailable
+                        ? `Open ${childSession.id}`
+                        : "Child session JSONL is not in the session index"
+                    }
+                    type="button"
+                    onClick={childSession.isAvailable ? onOpenChildSession : undefined}
+                  >
+                    Open child session
+                  </button>
+                ) : null}
+                {canSend || canStop ? (
+                  <div className={childSession ? "mt-3" : undefined} data-testid="child-session-controls">
+                    {canSend ? (
+                      <form
+                        className="flex gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void sendToChild();
+                        }}
+                      >
+                        <input
+                          aria-label="Send to child"
+                          className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground"
+                          data-testid="send-to-child-input"
+                          placeholder="Send to child"
+                          value={draft}
+                          onChange={(event) => setDraft(event.target.value)}
+                        />
+                        <button
+                          className="cursor-pointer rounded-md bg-primary px-2 py-1 text-xs text-background disabled:cursor-not-allowed disabled:opacity-50"
+                          data-testid="send-to-child"
+                          disabled={busy !== undefined || draft.trim() === ""}
+                          type="submit"
+                        >
+                          {busy === "send" ? "Sending…" : "Send"}
+                        </button>
+                      </form>
+                    ) : null}
+                    {canStop ? (
+                      <button
+                        className={`cursor-pointer rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50 ${canSend ? "mt-2" : ""}`}
+                        data-testid="stop-child"
+                        disabled={busy !== undefined}
+                        type="button"
+                        onClick={() => void stopChild()}
+                      >
+                        {busy === "stop" ? "Stopping…" : "Stop child"}
+                      </button>
+                    ) : null}
+                    {controlError ? (
+                      <p className="mt-2 text-xs text-danger" role="alert">
+                        {controlError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </dl>

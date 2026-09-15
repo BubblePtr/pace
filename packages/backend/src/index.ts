@@ -34,6 +34,8 @@ export {
   type WithdrawQueuedMessageInput,
   type SteerRunInput,
   type StopRunInput,
+  type SendSubagentInput,
+  type StopSubagentInput,
   type PiRuntimeDriver,
   type RuntimeGatewayBackendEvent,
   type RuntimeGatewayService,
@@ -81,6 +83,6 @@ export {
   createTintinwebSubagentShim,
   tintinwebSubagentShim,
 } from "./subagent/tintinweb";
-export type { SubagentShim, SubagentShimContext, PiEventBus } from "./subagent/shim";
+export type { SubagentShim, SubagentShimContext, SubagentSendInput, SubagentStopInput, PiEventBus } from "./subagent/shim";
 
 export { migrateDataDir } from "./persistence/session-event-journal";
