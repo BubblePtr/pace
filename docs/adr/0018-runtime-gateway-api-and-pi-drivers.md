@@ -88,9 +88,7 @@ PiGUI 的安全边界分层处理：
 
 ## 2026-09-13：进程内子会话观测
 
-桌面以 SDK driver 为主路径。Tintinweb 插件通过版本化的 `subagents:host:ready` 接口向后端注册所属根会话的 provider；Pace 订阅插件已经创建的子会话，使用同一套 Normalizer、Gateway sequencer 与 Journal 记录轨迹，不重复创建或绑定子会话。
-
-`get_subagents` / `get_subagent_snapshot` 提供状态和回放，`stop_subagent` / `steer_subagent` 按根会话限定控制范围。子会话有独立事件身份，不写入根会话消息模型或新增侧栏投影；根流中的 `subagent_record` 仅携带所属关系和状态。正常退出发出一次 SDK `session_shutdown` 并等待清理；异常重启把未完成观测记录标为 interrupted。详细契约见 [子代理观测](../subagent-observation.md)。
+该 Tintinweb 子代理宿主协议（`subagents:host:ready`、`get_subagents`、`subagent_record` Dock）已移除。见 [ADR-0040](0040-root-session-process-isolation.md)、[子代理观测](../subagent-observation.md) 与 [子代理契约 PRD](../../.scratch/subagent-contract/PRD.md)。
 
 
 2026-09-14：进程隔离由 `SessionProcessDriver` 承载现有 SDK Driver 实现，前端 Gateway 协议保持稳定；上述专用子会话观测方案由 [ADR-0040](0040-root-session-process-isolation.md) 取代。
