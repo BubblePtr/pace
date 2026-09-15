@@ -64,6 +64,9 @@ describe("shouldJournalRuntimeEvent", () => {
       { type: "error", code: "run_error", origin: "sdk" },
       { type: "usage", origin: "sdk" },
       { type: "queue", origin: "sdk" },
+      { type: "subagent", phase: "start", surface: "hidden", origin: "sdk" },
+      { type: "subagent", phase: "update", surface: "hidden", origin: "sdk" },
+      { type: "subagent", phase: "end", surface: "hidden", origin: "sdk" },
     ]) {
       expect(shouldJournalRuntimeEvent(payload)).toBe(true);
     }

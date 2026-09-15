@@ -78,6 +78,12 @@ type PiTrajectoryInspectorOwnProps = {
   onClose: () => void;
   /** Tool definition resolved by name (a Runtime Gateway capability). */
   schema?: TrajectoryToolSchema;
+  /**
+   * Trajectory-only deep-link for an Agent step whose SubagentRecord has a
+   * childSessionId. Missing JSONL → disabled, not an error.
+   */
+  childSession?: { id: string; isAvailable: boolean };
+  onOpenChildSession?: () => void;
 };
 
 export type PiTrajectoryInspectorProps = Omit<
@@ -93,6 +99,8 @@ export function PiTrajectoryInspector({
   onTabChange,
   onClose,
   schema,
+  childSession,
+  onOpenChildSession,
   className,
   ...rest
 }: PiTrajectoryInspectorProps) {
@@ -167,6 +175,28 @@ export function PiTrajectoryInspector({
                   className="max-h-56 max-w-full rounded-md object-contain outline outline-1 -outline-offset-1 outline-black/10"
                   src={step.imageUrl}
                 />
+              </div>
+            ) : null}
+            {childSession ? (
+              <div className="mt-3 border-t border-border pt-3">
+                <button
+                  className={`text-xs ${
+                    childSession.isAvailable
+                      ? "cursor-pointer text-foreground underline-offset-2 hover:underline"
+                      : "cursor-not-allowed text-muted"
+                  }`}
+                  data-testid="open-child-session"
+                  disabled={!childSession.isAvailable}
+                  title={
+                    childSession.isAvailable
+                      ? `Open ${childSession.id}`
+                      : "Child session JSONL is not in the session index"
+                  }
+                  type="button"
+                  onClick={childSession.isAvailable ? onOpenChildSession : undefined}
+                >
+                  Open child session
+                </button>
               </div>
             ) : null}
           </dl>

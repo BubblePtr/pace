@@ -314,6 +314,10 @@ function createAgentEventCompatMapper(): AgentEventCompatMapper {
       };
     }
 
+    if (payload.type === "subagent") {
+      return null;
+    }
+
     if (payload.type === "run" && payload.phase === "end") {
       // A failed run already surfaced its chat error; emitting the legacy
       // Completed status here would flip the session back to completed.

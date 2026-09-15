@@ -12,6 +12,7 @@ import type {
   Title,
 } from "@pace/core";
 import { isChatWorkspaceCwd } from "./chat-workspace";
+import { tintinwebSubagentShim } from "../subagent/tintinweb";
 
 const maxTextTitleChars = 96;
 const maxCommandArgsChars = 80;
@@ -145,6 +146,7 @@ export async function loadSessionDetail(
   dir: string,
   id: string,
   dataDir: string,
+  cache: SessionIndexCache = createSessionIndexCache(),
 ): Promise<SessionDetail> {
   const path = await findSessionFile(dir, id, dataDir);
 
@@ -152,7 +154,12 @@ export async function loadSessionDetail(
     throw new Error(`session ${id} was not found`);
   }
 
-  return parseSession(await readFile(path, "utf8"), dataDir);
+  const detail = parseSession(await readFile(path, "utf8"), dataDir);
+  const index = await buildSessionIndexWithCache(dir, cache, dataDir);
+  return {
+    ...detail,
+    subagents: tintinwebSubagentShim.fromSession?.(detail, index) ?? [],
+  };
 }
 
 export function parseSession(jsonl: string, dataDir: string): SessionDetail {

@@ -22,6 +22,8 @@ export type TrajectoryStep = {
   isError?: boolean;
   isRunning?: boolean;
   durationMs?: number;
+  /** Native toolCallId on a tool step; used to join SubagentRecords. */
+  toolCallId?: string;
 };
 
 export type TrajectoryTurn = {
@@ -121,6 +123,7 @@ export function buildTrajectoryTurns(turns: SessionTurn[]): TrajectoryTurn[] {
           argsText,
           isRunning: true,
           callId: payloadString(part, "id"),
+          ...(payloadString(part, "id") ? { toolCallId: payloadString(part, "id") } : {}),
         };
         openTools.push(step);
         steps.push(step);
@@ -136,7 +139,14 @@ export function buildTrajectoryTurns(turns: SessionTurn[]): TrajectoryTurn[] {
         const step =
           match ??
           (() => {
-            const orphan: TrajectoryStep = { id, turnIndex, stepIndex, kind: "tool", name: part.name };
+            const orphan: TrajectoryStep = {
+              id,
+              turnIndex,
+              stepIndex,
+              kind: "tool",
+              name: part.name,
+              ...(callId ? { toolCallId: callId } : {}),
+            };
             steps.push(orphan);
             stepIndex += 1;
             return orphan;

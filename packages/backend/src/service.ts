@@ -388,6 +388,7 @@ async function dispatchRequest(input: {
         input.agentDir,
         requiredString(params.id, "id"),
         input.dataDir,
+        input.sessionCache,
       );
     case "list_session_projections":
       return listSessionProjections({

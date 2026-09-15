@@ -82,7 +82,7 @@ Live Chat 中的本地文件链接由会话页面处理，流式与已完成回�
 - `PiTrajectoryLedger` + `.Run`：台账，行永不内联展开；徽章四色（USER / ASSISTANT / TOOL / CONTEXT）全部来自 `trajectoryStepType()` 与 `--pigui-data-*`。选中态、过滤、step/turn ref 放在根上经 context 下发；`.Run` 只传 `run`（外加可选 `isDimmed`）。`runs` 快捷路径行为不变。
 - 页面按 Run 虚拟化时，外层虚拟项用布局偏移 `top` 定位，不用 `translateY`：后者会使内部 sticky 横栏在滚动时错位、覆盖步骤。横栏在进入视口时仍位于本组步骤之前，到达滚动区顶部才吸顶，并在下一组进入时交接。
 - `PiTrajectoryStrip`：概览带。完整轨迹始终适配可用宽度；密集时按段数压缩最小列宽与间距，不裁掉尾部、不覆盖模式切换按钮。`widthMode: "steps" | "duration"` 必填且由页面持有；`lane` 只有 `"input" | "model" | "tools"`。推不出真实区间的段用斜纹 + 弱化标出，估算不伪装成实测。
-- `PiTrajectoryInspector`：`tab` 取自 `trajectoryInspectorTabs = ["Summary","Payload","Result","Schema","Timing"]`，由页面持有；Schema 拿不到时显示 unavailable 诚实态。
+- `PiTrajectoryInspector`：`tab` 取自 `trajectoryInspectorTabs = ["Summary","Payload","Result","Schema","Timing"]`，由页面持有；Schema 拿不到时显示 unavailable 诚实态。选中 tintinweb `Agent` 步骤且 `SubagentRecord.childSessionId` 已知时，Summary 提供 “Open child session”；子会话 JSONL 不在 `list_sessions` 里则禁用，不是错误。
 
 ```
 要展示一个 step？

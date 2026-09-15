@@ -1083,4 +1083,51 @@ describe("session runtime model", () => {
 
     expect(replayed).toBe(model);
   });
+
+  it("indexes hidden subagent records by ownerToolCallId without adding a timeline row", () => {
+    let model = createSessionRuntimeModel();
+    model = applyAgentRuntimeEvent(model, {
+      seq: 1,
+      timestamp: "2026-09-15T12:00:00.000Z",
+      event: {
+        type: "subagent",
+        phase: "start",
+        surface: "hidden",
+        origin: "sdk",
+        record: {
+          childSessionId: "child-1",
+          parentSessionId: "pi-session-1",
+          ownerToolCallId: "call-agent",
+          state: "started",
+          source: "tintinweb",
+          createdAt: "2026-09-15T12:00:00.000Z",
+          updatedAt: "2026-09-15T12:00:00.000Z",
+        },
+      },
+    });
+    model = applyAgentRuntimeEvent(model, {
+      seq: 2,
+      timestamp: "2026-09-15T12:01:00.000Z",
+      event: {
+        type: "subagent",
+        phase: "end",
+        surface: "hidden",
+        origin: "sdk",
+        record: {
+          childSessionId: "child-1",
+          parentSessionId: "pi-session-1",
+          ownerToolCallId: "call-agent",
+          state: "completed",
+          source: "tintinweb",
+          createdAt: "2026-09-15T12:00:00.000Z",
+          updatedAt: "2026-09-15T12:01:00.000Z",
+        },
+      },
+    });
+
+    expect(model.order).toEqual([]);
+    expect(model.messages.size).toBe(0);
+    expect(model.subagentsByOwnerToolCallId.get("call-agent")?.state).toBe("completed");
+    expect(model.subagentsByOwnerToolCallId.get("call-agent")?.childSessionId).toBe("child-1");
+  });
 });

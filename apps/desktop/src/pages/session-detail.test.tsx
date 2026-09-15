@@ -7,7 +7,7 @@ import {
   largeSessionDetailApproxBytes,
 } from "@/entities/session/session-detail.fixtures";
 import { SessionDetailView } from "@/pages/session-detail";
-import type { SessionDetail, SessionTurn } from "@pace/core";
+import type { SessionDetail, SessionTurn, SubagentRecord } from "@pace/core";
 
 function layoutStripColumns(container: HTMLElement) {
   const columns = [...container.querySelectorAll<HTMLElement>("[data-strip-col]")];
@@ -24,6 +24,61 @@ function layoutStripColumns(container: HTMLElement) {
       toJSON: () => ({}),
     });
   });
+}
+
+function agentSubagentRecord(): SubagentRecord {
+  return {
+    childSessionId: "child-1",
+    parentSessionId: "parent-session",
+    ownerToolCallId: "call-agent",
+    state: "completed",
+    source: "tintinweb",
+    createdAt: "2026-09-15T12:00:00.000Z",
+    updatedAt: "2026-09-15T12:01:00.000Z",
+  };
+}
+
+function agentToolSession(): SessionDetail {
+  const turns: SessionTurn[] = [
+    {
+      kind: "message",
+      role: "user",
+      timestamp: "2026-09-15T12:00:00.000Z",
+      parts: [{ partType: "text", text: "Explore the repo", payload: {} }],
+    },
+    {
+      kind: "message",
+      role: "assistant",
+      timestamp: "2026-09-15T12:00:10.000Z",
+      parts: [
+        {
+          partType: "toolCall",
+          name: "Agent",
+          payload: {
+            id: "call-agent",
+            arguments: { subagent_type: "Explore", prompt: "look around", description: "Explore" },
+          },
+        },
+        {
+          partType: "toolResult",
+          name: "Agent",
+          text: "done",
+          payload: { toolCallId: "call-agent" },
+        },
+      ],
+    },
+  ];
+  return {
+    id: "parent-session",
+    timestamp: "2026-09-15T12:00:00.000Z",
+    project: "fixture-project",
+    totalCostUsd: 0,
+    totalTokens: 0,
+    primaryModel: "gpt-5-codex",
+    turnCount: turns.length,
+    durationSeconds: 10,
+    turns,
+  };
 }
 
 function emptyModelSegmentSession(): SessionDetail {
@@ -336,5 +391,59 @@ describe("SessionDetailView (Trajectory Cockpit)", () => {
     await waitFor(() => {
       expect(container.querySelector('[data-index="63"]')).toBeInTheDocument();
     });
+  });
+
+  it("opens a child session from an Agent step when the child JSONL is indexed", async () => {
+    const user = userEvent.setup();
+    const onOpenChildSession = vi.fn();
+    render(
+      <SessionDetailView
+        indexedSessionIds={new Set(["child-1"])}
+        session={agentToolSession()}
+        sessionId="parent-session"
+        subagentsByOwnerToolCallId={new Map([["call-agent", agentSubagentRecord()]])}
+        onOpenChildSession={onOpenChildSession}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Agent/ }));
+    const action = screen.getByTestId("open-child-session");
+    expect(action).toBeEnabled();
+    await user.click(action);
+    expect(onOpenChildSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("disables Open child session when the child JSONL is not in list_sessions", async () => {
+    const user = userEvent.setup();
+    const onOpenChildSession = vi.fn();
+    render(
+      <SessionDetailView
+        indexedSessionIds={new Set(["other-session"])}
+        session={agentToolSession()}
+        sessionId="parent-session"
+        subagentsByOwnerToolCallId={new Map([["call-agent", agentSubagentRecord()]])}
+        onOpenChildSession={onOpenChildSession}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Agent/ }));
+    expect(screen.getByTestId("open-child-session")).toBeDisabled();
+    expect(onOpenChildSession).not.toHaveBeenCalled();
+  });
+
+  it("does not show Open child session on a non-Agent tool step", async () => {
+    const user = userEvent.setup();
+    const session = makeLargeSessionDetail(2);
+    render(
+      <SessionDetailView
+        indexedSessionIds={new Set(["child-1"])}
+        session={session}
+        sessionId={session.id}
+        subagentsByOwnerToolCallId={new Map([["call_1", agentSubagentRecord()]])}
+      />,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: /read_file/ })[0]);
+    expect(screen.queryByTestId("open-child-session")).not.toBeInTheDocument();
   });
 });

@@ -10,8 +10,9 @@ import type {
   AgentRunTrigger,
   AgentStatusCode,
   RuntimePromptImage,
+  SubagentRecord,
 } from "@pace/core";
-import { promptImageDataUrl } from "@pace/core";
+import { applySubagentRecord, promptImageDataUrl } from "@pace/core";
 import type { SessionStatus } from "./session-projection";
 
 export type SessionRuntimeRun = {
@@ -112,6 +113,8 @@ export type SessionRuntimeModel = {
   order: readonly SessionRuntimeOrderEntry[];
   lastSeq: number;
   updatedAt: string | null;
+  /** Hidden subagent records, keyed by ownerToolCallId. Never a chat/trajectory row. */
+  subagentsByOwnerToolCallId: ReadonlyMap<string, SubagentRecord>;
 };
 
 export type AgentRuntimeEventInput = {
@@ -130,6 +133,7 @@ export function createSessionRuntimeModel(): SessionRuntimeModel {
     order: [],
     lastSeq: 0,
     updatedAt: null,
+    subagentsByOwnerToolCallId: new Map(),
   };
 }
 
@@ -455,6 +459,14 @@ export function applyAgentRuntimeEvent(
         errors: [...model.errors, error],
         order: withOrderEntry(model.order, { kind: "error", id: `error-${seq}`, seq }),
       };
+    }
+
+    case "subagent": {
+      const subagentsByOwnerToolCallId = applySubagentRecord(
+        new Map(model.subagentsByOwnerToolCallId),
+        event.record,
+      );
+      return { ...model, ...base, subagentsByOwnerToolCallId };
     }
 
     // turn boundaries are embedded in message/tool identity; queue and usage

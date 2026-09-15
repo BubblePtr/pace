@@ -83,6 +83,22 @@ export {
 } from "./agent-runtime-event";
 
 export {
+  isSettledSubagentState,
+  subagentPhaseForTransition,
+  emptySubagentLookup,
+  indexSubagentRecords,
+  applySubagentRecord,
+  lookupSubagentByOwnerToolCallId,
+  type SubagentSource,
+  type SubagentState,
+  type SubagentUsage,
+  type SubagentCapabilities,
+  type SubagentRecord,
+  type SubagentEventPhase,
+  type SubagentLookup,
+} from "./subagent";
+
+export {
   parseRuntimePromptImages,
   promptImageDataUrl,
   toPiImageContent,

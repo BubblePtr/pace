@@ -10,6 +10,7 @@ import {
   classifyTitle,
   createSessionIndexCache,
   deriveProjectName,
+  loadSessionDetail,
   parseSession,
   type SessionPresenceProjection,
 } from "./sessions";
@@ -284,6 +285,47 @@ describe("backend session parser", () => {
       kind: "text",
       sentence: `${"🙂".repeat(96)}...`,
     });
+  });
+});
+
+describe("loadSessionDetail tintinweb cold pass", () => {
+  it("attaches SubagentRecords from parent Agent tools and the session index", async () => {
+    const agentDir = await tempAgentDir();
+    await writeSession(
+      agentDir,
+      "demo",
+      "child-cold.jsonl",
+      `{"type":"session","id":"child-cold","timestamp":"2026-09-15T12:00:00.000Z","cwd":"/tmp/demo"}
+`,
+    );
+    await writeSession(
+      agentDir,
+      "demo",
+      "parent.jsonl",
+      `{"type":"session","id":"parent-session","timestamp":"2026-09-15T12:00:00.000Z","cwd":"/tmp/demo"}
+{"type":"message","id":"m1","timestamp":"2026-09-15T12:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"explore"}]}}
+{"type":"message","id":"m2","parentId":"m1","timestamp":"2026-09-15T12:00:02.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-cold","name":"Agent","arguments":{"subagent_type":"Explore","prompt":"map the repo","description":"Explore","run_in_background":true}}],"model":"gpt-5"}}
+{"type":"message","id":"m3","parentId":"m2","timestamp":"2026-09-15T12:00:03.000Z","message":{"role":"toolResult","toolCallId":"call-cold","toolName":"Agent","content":[{"type":"text","text":"Agent ID: ag-cold"}],"details":{"agentId":"ag-cold","status":"background","sessionFile":"/tmp/demo/child-cold.jsonl"}}}
+`,
+    );
+
+    const parsed = parseSession(
+      await readFile(join(agentDir, "sessions", "demo", "parent.jsonl"), "utf8"),
+      unusedDataDir,
+    );
+    expect(parsed.subagents).toBeUndefined();
+
+    const detail = await loadSessionDetail(agentDir, "parent-session", unusedDataDir);
+    expect(detail.subagents).toEqual([
+      expect.objectContaining({
+        childSessionId: "child-cold",
+        parentSessionId: "parent-session",
+        ownerToolCallId: "call-cold",
+        sourceAgentId: "ag-cold",
+        state: "started",
+        source: "tintinweb",
+      }),
+    ]);
   });
 });
 
