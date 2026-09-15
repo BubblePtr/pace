@@ -76,23 +76,25 @@ created ──start──► started ──complete──► completed
               │            └──stop─────► stopped
               ├──fail──► failed
               └──stop──► stopped
+
+completed | failed | stopped ──resume──► started
 ```
 
-Terminal: `completed` | `failed` | `stopped`. No reverse transitions. `steered` / compact / queue are not states (control or source-private).
+Settled: `completed` | `failed` | `stopped`. A resume transitions a settled child back to `started` — the child is a long-lived conversation (pico “recover: the child exists; drive it again”; nicobailon `action: "resume"`; Claude Code SendMessage auto-resume of completed agents), mirroring Pace’s Session vs Active Run split. `steered` / compact / queue are not states (control or source-private).
 
 | State | Means |
 | --- | --- |
 | `created` | Child conversation registered, not yet running (pico `spawn` return; tintinweb `queued` / `subagents:created`) |
-| `started` | Child is executing (pico `run` / first generation; tintinweb `subagents:started`) |
-| `completed` | Child finished successfully |
-| `failed` | Child errored |
-| `stopped` | Child aborted / stopped (distinct from failed) |
+| `started` | Child is executing (pico `run` / first generation; tintinweb `subagents:started`; or a resume of a settled child) |
+| `completed` | Settled successfully; resume → `started` |
+| `failed` | Settled with error; resume → `started` |
+| `stopped` | Settled after abort / stop (distinct from failed); resume → `started` |
 
 ### Control surface
 
 `send` and `stop` are **optional capabilities**, advertised on the record (and later on Runtime Gateway capability advertisement, same pattern as model/thinking/queue/steer — ADR-0024). Slice 1 does not add Gateway methods.
 
-- `send(childSessionId, text)` — queue/deliver text to the child. Not parent `steer_run`.
+- `send(childSessionId, text)` — parent→child input delivery. Queued if the child is busy; auto-resumes a settled child (which transitions it back to `started`). Not parent `steer_run`. No child→parent or sibling messaging is modelled; the child’s output remains the parent’s tool result.
 - `stop(childSessionId)` — cancel that child. Not parent Stop.
 
 A source that only observes sets neither flag. UI must hide controls the source did not advertise.
@@ -113,6 +115,8 @@ A subagent record is a first-class `AgentRuntimeEvent`, not a revival of the dro
     turnId?: string;
   }
 ```
+
+A resume is emitted as `phase: "update"` on the same record (no new event type).
 
 Flow (README prompt path, extra hop in bold):
 
@@ -231,3 +235,4 @@ Each slice is one PR. Issues to be filed after this PRD lands (`docs/agents/issu
 4. **Usage double-count.** Parent totals already include plugin-reported tool usage when `reportUsage` is on (tintinweb). Per-child `usage` on the record is observational; do not subtract it from the parent (ADR-0040). Confirm before any cost UI.
 5. **Capability advertisement.** Per-record flags vs a session-level Gateway capability like today’s model controls? Per-record is more honest (RPC-spawned tintinweb agents have no `Agent` tool row).
 6. **pico timing.** Treat §8.5 as months-scale and unstable; do not block slices 1–3 on it.
+7. **Workflow / peer messaging.** tintinweb SubagentWorkflow and Claude Code Agent Teams move messages between children or back to siblings. Explicitly out of scope until a source ships that on this contract.
