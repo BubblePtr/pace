@@ -15,6 +15,30 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.10",
+    date: "2026-09-15",
+    title: "Follow your subagents",
+    summary: "Agent steps open their child sessions, running subagents can be stopped from the Inspector, and dock hints stop covering their neighbors.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.10",
+    changes: [
+      {
+        kind: "added",
+        title: "Open child sessions",
+        description: "Agent steps in the Trajectory resolve to the subagent's real session. Select one in the Inspector to jump into the child's own timeline.",
+      },
+      {
+        kind: "added",
+        title: "Subagent controls",
+        description: "The Inspector can stop a running subagent, or send it a follow-up when the extension advertises support.",
+      },
+      {
+        kind: "fixed",
+        title: "Hints keep their distance",
+        description: "Package cards no longer flash tooltips for truncated text, and dock rail hints open to the left instead of covering neighboring icons.",
+      },
+    ],
+  },
+  {
     version: "0.0.9",
     date: "2026-09-14",
     title: "Instant history, isolated sessions",
