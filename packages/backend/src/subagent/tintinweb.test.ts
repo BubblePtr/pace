@@ -204,7 +204,7 @@ describe("tintinweb observe() live mapping", () => {
       true,
     );
     const completed = emitted.filter((entry) => entry.record.state === "completed");
-    expect(completed.at(-1)?.record).toMatchObject({
+    expect(completed[completed.length - 1]?.record).toMatchObject({
       sourceAgentId: "ag-bg",
       ownerToolCallId: "call-bg",
       childSessionId: "ag-bg",
@@ -285,7 +285,7 @@ describe("tintinweb observe() live mapping", () => {
     bus.emit("subagents:failed", { id: "ag-stop", status: "aborted", error: "aborted" });
 
     expect(emitted.map((entry) => entry.record.state)).toEqual(["started", "stopped"]);
-    expect(emitted.at(-1)?.phase).toBe("end");
+    expect(emitted[emitted.length - 1]?.phase).toBe("end");
     stop();
   });
 

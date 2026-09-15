@@ -410,7 +410,8 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
       }
       const at = now();
       if (type === "subagents:created") {
-        const pending = [...pendingTools.values()].at(-1);
+        const pendingToolsList = [...pendingTools.values()];
+        const pending = pendingToolsList[pendingToolsList.length - 1];
         merge({
           sourceAgentId,
           ownerToolCallId: pending?.toolCallId ?? asString(data.toolCallId),
@@ -424,7 +425,8 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
       }
       if (type === "subagents:started") {
         const existing = records.get(sourceAgentId);
-        const pending = [...pendingTools.values()].at(-1);
+        const pendingToolsList = [...pendingTools.values()];
+        const pending = pendingToolsList[pendingToolsList.length - 1];
         const ownerToolCallId = existing?.ownerToolCallId || pending?.toolCallId || asString(data.toolCallId);
         merge({
           sourceAgentId,

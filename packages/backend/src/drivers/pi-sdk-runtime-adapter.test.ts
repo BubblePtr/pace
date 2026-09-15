@@ -1303,7 +1303,7 @@ describe("Pi SDK public runtime adapter", () => {
         source: "tintinweb",
       },
     });
-    expect(subagentEvents.at(-1)?.payload).toMatchObject({
+    expect(subagentEvents[subagentEvents.length - 1]?.payload).toMatchObject({
       phase: "end",
       record: { state: "completed", childSessionId: "child-1" },
     });

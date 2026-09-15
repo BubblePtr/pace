@@ -753,7 +753,15 @@ async function createPublicPiSdkRuntime(context: {
         }
       }
     };
+    // One SDK subscribe, many Pace listeners. AgentSession.subscribe is not
+    // guaranteed to fan out, and tests often keep only the last listener.
+    const sessionEventListeners = new Set<(event: unknown) => void>();
     const unsubscribe = session.subscribe((event) => {
+      for (const listener of sessionEventListeners) {
+        listener(event);
+      }
+    });
+    sessionEventListeners.add((event) => {
       if (
         isRecord(event) &&
         event.type === "session_info_changed" &&
@@ -794,7 +802,12 @@ async function createPublicPiSdkRuntime(context: {
     });
     const unsubscribeSubagentShim = createTintinwebSubagentShim({
       events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
-      subscribeSession: (listener) => session.subscribe(listener),
+      subscribeSession: (listener) => {
+        sessionEventListeners.add(listener);
+        return () => {
+          sessionEventListeners.delete(listener);
+        };
+      },
       now,
       resolveChildSessionId: childSessionIdFromSessionFileHeader,
     }).observe({
