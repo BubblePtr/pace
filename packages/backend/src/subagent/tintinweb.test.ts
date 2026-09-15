@@ -66,22 +66,6 @@ function installFakeTintinwebRpc(
     agent.status = "stopped";
     reply("subagents:rpc:stop", params.requestId, { success: true });
   });
-  bus.on("subagents:rpc:steer", (raw) => {
-    const params = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-    const agentId = typeof params.agentId === "string" ? params.agentId : "";
-    const message = typeof params.message === "string" ? params.message : "";
-    const agent = agents.get(agentId);
-    if (!agent) {
-      reply("subagents:rpc:steer", params.requestId, { success: false, error: "Agent not found" });
-      return;
-    }
-    agent.steered.push(message);
-    if (agent.status !== "running" && agent.status !== "queued") {
-      agent.status = "running";
-      bus.emit("subagents:started", { id: agentId, type: "Explore", description: "resumed" });
-    }
-    reply("subagents:rpc:steer", params.requestId, { success: true });
-  });
 }
 
 function collect(observe: (onRecord: (record: SubagentRecord, phase: string) => void) => () => void) {
@@ -204,7 +188,7 @@ describe("tintinweb observe() live mapping", () => {
       sourceAgentId: "ag-fg",
       sessionFile: "/pi/sessions/child-fg.jsonl",
       usage: { inputTokens: 3, outputTokens: 5, cacheReadTokens: 0, totalTokens: 8, costUsd: 0.002 },
-      capabilities: { send: true, stop: true },
+      capabilities: { stop: true },
     });
     stop();
   });
@@ -614,6 +598,21 @@ describe("tintinweb send/stop", () => {
     });
   }
 
+  function observeShim(bus: PiEventBus, extra: { resolveChild?: boolean } = {}) {
+    const sessionListeners: Array<(event: unknown) => void> = [];
+    const shim = createTintinwebSubagentShim({
+      events: bus,
+      subscribeSession: (listener) => {
+        sessionListeners.push(listener);
+        return () => {};
+      },
+      now: () => "2026-09-15T12:00:00.000Z",
+      ...(extra.resolveChild ? { resolveChildSessionId: () => "child-ctl" } : {}),
+    });
+    const { emitted, stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
+    return { shim, sessionListeners, emitted, stop };
+  }
+
   it("omits capabilities when the event bus cannot emit", () => {
     const bus = createListenOnlyBus();
     const sessionListeners: Array<(event: unknown) => void> = [];
@@ -641,42 +640,21 @@ describe("tintinweb send/stop", () => {
     stop();
   });
 
-  it("steers and stops over the event-bus RPC and resumes a settled child as update", async () => {
+  it("stops over the event-bus RPC without advertising send", async () => {
     const bus = createMemoryBus();
-    const agents = new Map([
-      ["ag-ctl", { status: "running", steered: [] as string[], stopped: false }],
-    ]);
+    const agents = new Map([["ag-ctl", { status: "running", steered: [] as string[], stopped: false }]]);
     installFakeTintinwebRpc(bus, agents);
-    const sessionListeners: Array<(event: unknown) => void> = [];
-    const shim = createTintinwebSubagentShim({
-      events: bus,
-      subscribeSession: (listener) => {
-        sessionListeners.push(listener);
-        return () => {};
-      },
-      now: () => "2026-09-15T12:00:00.000Z",
-      resolveChildSessionId: () => "child-ctl",
-    });
-    const { emitted, stop } = collect((onRecord) =>
-      shim.observe({ parentSessionId, onRecord }),
-    );
+    const { shim, sessionListeners, emitted, stop } = observeShim(bus, { resolveChild: true });
     startChild(bus, sessionListeners);
-    expect(emitted[0]?.record.capabilities).toEqual({ send: true, stop: true });
-
-    await shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" });
-    expect(agents.get("ag-ctl")?.steered).toEqual(["nudge"]);
+    expect(emitted[0]?.record.capabilities).toEqual({ stop: true });
+    await expect(shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" })).rejects.toThrow(
+      "does not advertise send",
+    );
 
     await shim.stop?.({ childSessionId: "child-ctl" });
     expect(agents.get("ag-ctl")?.stopped).toBe(true);
     bus.emit("subagents:failed", { id: "ag-ctl", status: "stopped" });
     expect(emitted[emitted.length - 1]).toMatchObject({ phase: "end", record: { state: "stopped" } });
-
-    agents.get("ag-ctl")!.status = "stopped";
-    await shim.send?.({ sourceAgentId: "ag-ctl", text: "again" });
-    expect(emitted[emitted.length - 1]).toMatchObject({
-      phase: "update",
-      record: { state: "started", sourceAgentId: "ag-ctl" },
-    });
     stop();
   });
 
@@ -707,81 +685,57 @@ describe("tintinweb send/stop", () => {
     await expect(shim.stop?.({ sourceAgentId: "ag-ctl" })).rejects.toThrow("does not advertise stop");
   });
 
-  it("steers a running child through the in-process manager record", async () => {
-    const steered: string[] = [];
-    (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
-      getRecord(id: string) {
-        if (id !== "ag-ctl") {
-          return undefined;
-        }
-        return {
-          id,
-          status: "running",
-          session: {
-            steer: async (message: string) => {
-              steered.push(message);
-            },
-          },
-        };
-      },
-    };
+  it("advertises send only when the registry exposes steer/resume, and routes through those functions", async () => {
     const bus = createMemoryBus();
-    const sessionListeners: Array<(event: unknown) => void> = [];
-    const shim = createTintinwebSubagentShim({
-      events: bus,
-      subscribeSession: (listener) => {
-        sessionListeners.push(listener);
-        return () => {};
-      },
-      now: () => "2026-09-15T12:00:00.000Z",
-      resolveChildSessionId: () => "child-ctl",
-    });
-    const { stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
-    startChild(bus, sessionListeners);
-    await shim.send?.({ sourceAgentId: "ag-ctl", text: "via registry" });
-    expect(steered).toEqual(["via registry"]);
-    stop();
-  });
 
-  it("resumes a settled child through manager.resume when the registry exposes it", async () => {
-    const resumed: string[] = [];
     (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
-      getRecord(id: string) {
-        if (id !== "ag-ctl") {
-          return undefined;
-        }
-        return { id, status: "completed", session: {} };
+      waitForAll: async () => {},
+      hasRunning: () => false,
+      spawn: () => "unused",
+      getRecord: () => undefined,
+    };
+    const lacking = observeShim(bus, { resolveChild: true });
+    startChild(bus, lacking.sessionListeners);
+    expect(lacking.emitted[0]?.record.capabilities).toEqual({ stop: true });
+    expect(lacking.emitted[0]?.record.capabilities?.send).toBeUndefined();
+    await expect(lacking.shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" })).rejects.toThrow(
+      "does not advertise send",
+    );
+    lacking.stop();
+
+    const steered: Array<{ id: string; message: string }> = [];
+    const resumed: Array<{ id: string; prompt: string; options: unknown }> = [];
+    (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
+      steer(id: string, message: string) {
+        steered.push({ id, message });
+        return true;
       },
-      resume: async (id: string, prompt: string) => {
-        resumed.push(`${id}:${prompt}`);
+      resume: async (id: string, prompt: string, _signal?: unknown, options?: { isBackground?: boolean }) => {
+        resumed.push({ id, prompt, options });
       },
     };
-    const bus = createMemoryBus();
-    const sessionListeners: Array<(event: unknown) => void> = [];
-    const shim = createTintinwebSubagentShim({
-      events: bus,
-      subscribeSession: (listener) => {
-        sessionListeners.push(listener);
-        return () => {};
-      },
-      now: () => "2026-09-15T12:00:00.000Z",
-      resolveChildSessionId: () => "child-ctl",
-    });
-    const { emitted, stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
-    startChild(bus, sessionListeners);
+    const exposed = observeShim(bus, { resolveChild: true });
+    startChild(bus, exposed.sessionListeners);
+    expect(exposed.emitted[0]?.record.capabilities).toEqual({ send: true, stop: true });
+    await exposed.shim.send?.({ sourceAgentId: "ag-ctl", text: "nudge" });
+    expect(steered).toEqual([{ id: "ag-ctl", message: "nudge" }]);
+
     bus.emit("subagents:completed", { id: "ag-ctl" });
-    await shim.send?.({ sourceAgentId: "ag-ctl", text: "continue" });
-    expect(resumed).toEqual(["ag-ctl:continue"]);
+    expect(exposed.emitted[exposed.emitted.length - 1]).toMatchObject({
+      record: { state: "completed", capabilities: { send: true, stop: true } },
+    });
+    await exposed.shim.send?.({ sourceAgentId: "ag-ctl", text: "continue" });
+    expect(resumed).toEqual([{ id: "ag-ctl", prompt: "continue", options: { isBackground: true } }]);
     bus.emit("subagents:started", {
       id: "ag-ctl",
       type: "Explore",
       description: "Look",
       sessionFile: "/pi/sessions/child-ctl.jsonl",
     });
-    expect(emitted[emitted.length - 1]).toMatchObject({
+    expect(exposed.emitted[exposed.emitted.length - 1]).toMatchObject({
       phase: "update",
       record: { state: "started", sourceAgentId: "ag-ctl" },
     });
-    stop();
+    exposed.stop();
   });
 });

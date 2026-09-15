@@ -30,7 +30,25 @@ git:github.com/tintinweb/pi-subagents@e955e29c51b7a6cce37e1108cd2d6c57a77e151c
 
 `send` 和 `stop` 是记录上的可选能力。Runtime Gateway 提供 `send_subagent` / `stop_subagent`（参数为根 `sessionId`/`piSessionId` 加 `childSessionId` 或 `sourceAgentId`），错误形状与 `steer_run` / `stop_run` 相同。未广告该能力时拒绝，不调用 shim。父会话 Stop 仍只 abort 当前 Active Run（ADR-0040），不会级联停止子代理。
 
-Tintinweb 活记录仅在 `pi.events.emit` 可用时广告 `{ send: true, stop: true }`。Stop 走文档化的 `subagents:rpc:stop`。Send 优先 `Symbol.for("pi-subagents:manager").getRecord` + `session.steer`（与 `steer_subagent` 同一机制）；没有 in-process manager 时再试 `subagents:rpc:steer`（当前上游没有该通道）。不复活 `subagents:host:ready`，也不由 Pace 生成子代理。已结束的子会话若 tintinweb 再次 `subagents:started`，shim 发 `phase: "update"`，UI 不伪造该跃迁。冷 JSONL `fromSession` 不广告控制。
+Stop 走文档化的 `subagents:rpc:stop`，因此活记录仅在 `pi.events.emit` 可用时广告 `stop: true`。
+
+Send **只**走 tintinweb 的 in-process 注册表 `globalThis[Symbol.for("pi-subagents:manager")]` 上的公开函数，不读 `record.session`，不改 `pendingSteers`，也不向不存在的 `subagents:rpc:steer` 发事件。当前上游注册表只导出 `waitForAll` / `hasRunning` / `spawn` / `getRecord`，所以 tintinweb 记录今天只广告 `stop`。一旦上游挂上下列签名，Pace 零改动即可广告并路由 `send`：
+
+```ts
+steer(id: string, message: string): boolean
+resume(
+  id: string,
+  prompt: string,
+  signal?: AbortSignal,
+  options?: { isBackground?: boolean },
+): Promise<unknown>
+```
+
+- 未结束的子会话：`send: true` 当且仅当 `typeof manager.steer === "function"`；调用 `manager.steer(agentId, text)`。
+- 已结束的子会话：`send: true` 当且仅当 `typeof manager.resume === "function"`；调用 `manager.resume(agentId, text, undefined, { isBackground: true })`。
+- 注册表缺少对应函数时，shim 抛出 `tintinweb does not expose steer/resume on its registry`。
+
+不复活 `subagents:host:ready`，也不由 Pace 生成子代理。已结束的子会话若 tintinweb 再次 `subagents:started`，shim 发 `phase: "update"`，UI 不伪造该跃迁。冷 JSONL `fromSession` 不广告控制。
 
 Trajectory Inspector 在记录广告对应能力、且状态说得通时显示 “Send to child” / “Stop child”。该页接入 runtime model 的 `subagentsByOwnerToolCallId`（slice 1 的 live follow-up），与冷扫描合并，live 覆盖 cold。
 

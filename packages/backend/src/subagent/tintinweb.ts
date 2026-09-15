@@ -2,6 +2,7 @@ import type {
   SessionContentPart,
   SessionDetail,
   SessionSummary,
+  SubagentCapabilities,
   SubagentRecord,
   SubagentState,
   SubagentUsage,
@@ -17,9 +18,8 @@ const TINTINWEB_LIFECYCLE_EVENTS = [
 ] as const;
 
 const TINTINWEB_MANAGER = Symbol.for("pi-subagents:manager");
-const TINTINWEB_CAPABILITIES = { send: true, stop: true } as const;
 const RPC_TIMEOUT_MS = 2_000;
-const STEER_RPC_TIMEOUT_MS = 50;
+const REGISTRY_MISSING_ERROR = "tintinweb does not expose steer/resume on its registry";
 
 export type TintinwebSubagentShimDeps = {
   events?: PiEventBus;
@@ -187,20 +187,7 @@ export function piEventBusFromUnknown(value: unknown): PiEventBus | undefined {
   return piEventBusFromUnknown(value.eventBus) ?? piEventBusFromUnknown(value._resourceLoader);
 }
 
-type TintinwebAgentSession = {
-  steer?: (message: string) => Promise<unknown>;
-  prompt?: (message: string) => Promise<unknown>;
-};
-
-type TintinwebAgentRecord = {
-  id?: string;
-  status?: string;
-  session?: TintinwebAgentSession;
-  pendingSteers?: string[];
-};
-
 type TintinwebManager = {
-  getRecord?: (id: string) => TintinwebAgentRecord | undefined;
   steer?: (id: string, message: string) => boolean;
   resume?: (
     id: string,
@@ -256,50 +243,28 @@ function rpcCall(
   });
 }
 
-function isRpcTimeout(error: unknown): boolean {
-  return isRecord(error) && error.code === "rpc_timeout";
-}
-
-function isActiveTintinwebStatus(status: string | undefined): boolean {
-  return status === undefined || status === "running" || status === "queued" || status === "created";
-}
-
-async function sendViaRegistry(agentId: string, text: string): Promise<boolean> {
+function capabilitiesFor(
+  state: SubagentState,
+  events: PiEventBus | undefined,
+): SubagentCapabilities | undefined {
   const manager = tintinwebManager();
-  const record = manager?.getRecord?.(agentId);
-  if (!record) {
-    return false;
+  const canSend = isSettledSubagentState(state)
+    ? typeof manager?.resume === "function"
+    : typeof manager?.steer === "function";
+  const canStop = controlBusAvailable(events);
+  if (!canSend && !canStop) {
+    return undefined;
   }
-  const status = asString(record.status)?.toLowerCase();
-  if (isActiveTintinwebStatus(status)) {
-    if (typeof manager?.steer === "function") {
-      if (!manager.steer(agentId, text)) {
-        throw new Error(`Agent "${agentId}" is not running.`);
-      }
-      return true;
-    }
-    if (typeof record.session?.steer === "function") {
-      await record.session.steer(text);
-      return true;
-    }
-    record.pendingSteers = record.pendingSteers ?? [];
-    record.pendingSteers.push(text);
-    return true;
-  }
-  if (typeof manager?.resume === "function") {
-    await manager.resume(agentId, text, undefined, { isBackground: true });
-    return true;
-  }
-  throw new Error(
-    `Cannot send to settled child "${agentId}": tintinweb did not expose resume on the in-process manager.`,
-  );
+  return {
+    ...(canSend ? { send: true } : {}),
+    ...(canStop ? { stop: true } : {}),
+  };
 }
 
 export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}): SubagentShim {
   const now = deps.now ?? (() => new Date().toISOString());
   const records = new Map<string, SubagentRecord>();
   const byToolCallId = new Map<string, SubagentRecord>();
-  const controlAvailable = controlBusAvailable(deps.events);
 
   const resolveChild = (sessionFile: string | undefined, index: readonly Pick<SessionSummary, "id">[]) =>
     childSessionIdFromSessionFile(sessionFile, index, deps.resolveChildSessionId);
@@ -476,6 +441,7 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
         input.state === "started" || input.state === "created"
           ? existing?.startedAt ?? (input.state === "started" ? at : existing?.startedAt)
           : existing?.startedAt;
+      const capabilities = capabilitiesFor(input.state, deps.events);
       const record: SubagentRecord = {
         childSessionId,
         parentSessionId: ctx.parentSessionId,
@@ -487,7 +453,7 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
         ...(input.usage ?? existing?.usage ? { usage: input.usage ?? existing?.usage } : {}),
         ...(startedAt ? { startedAt } : {}),
         ...(isSettledSubagentState(input.state) ? { endedAt: at } : {}),
-        ...(controlAvailable ? { capabilities: TINTINWEB_CAPABILITIES } : {}),
+        ...(capabilities ? { capabilities } : {}),
         ...(sourceAgentId ? { sourceAgentId } : {}),
         ...(sessionFile ? { sessionFile } : {}),
       };
@@ -681,21 +647,19 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
       throw new Error("This subagent does not advertise send.");
     }
     const agentId = requireAgentId(record);
-    if (await sendViaRegistry(agentId, text)) {
+    const manager = tintinwebManager();
+    if (isSettledSubagentState(record.state)) {
+      if (typeof manager?.resume !== "function") {
+        throw new Error(REGISTRY_MISSING_ERROR);
+      }
+      await manager.resume(agentId, text, undefined, { isBackground: true });
       return;
     }
-    if (!controlBusAvailable(deps.events)) {
-      throw new Error("Tintinweb subagent send is not available on this session.");
+    if (typeof manager?.steer !== "function") {
+      throw new Error(REGISTRY_MISSING_ERROR);
     }
-    try {
-      await rpcCall(deps.events, "subagents:rpc:steer", { agentId, message: text }, STEER_RPC_TIMEOUT_MS);
-    } catch (error) {
-      if (!isRpcTimeout(error)) {
-        throw error;
-      }
-      throw new Error(
-        `Cannot send to child "${agentId}": tintinweb has no steer RPC and the in-process manager did not know this agent.`,
-      );
+    if (!manager.steer(agentId, text)) {
+      throw new Error(`Agent "${agentId}" is not running.`);
     }
   }
 
