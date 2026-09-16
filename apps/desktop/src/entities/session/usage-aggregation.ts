@@ -1,518 +1,256 @@
 import type { NamedCount, SessionSummary } from "@/entities/session/sessions";
 
-export type ModelCost = {
-  model: string;
-  costUsd: number;
-  tokens: number;
-};
+// Usage page read model. Cost (USD) is the primary axis; tokens ride along.
+// Days are UTC calendar days everywhere except the weekday × hour grid,
+// which takes a clock so the page can bucket in the user's local time.
 
-export type ModelDistribution = ModelCost & {
-  costShare: number;
-  tokenShare: number;
-};
+export type UsagePeriod = "7d" | "30d" | "90d" | "all";
 
-export type DailyProjectCost = {
-  project: string;
-  costUsd: number;
-};
-
-export type DailyCostByProject = {
-  date: string;
-  totalCostUsd: number;
-  projects: DailyProjectCost[];
-};
-
-export type CostTrendGranularity = "day" | "week" | "month" | "year" | "cumulative";
-
-export type CostByProjectBucket = {
-  key: string;
-  startDate: string;
-  endDate: string;
-  totalCostUsd: number;
-  projects: DailyProjectCost[];
-};
-
-export type DailyTokenUsage = {
-  date: string;
-  totalTokens: number;
-};
-
-export type DailyProjectTokens = {
-  project: string;
-  tokens: number;
-};
-
-export type DailyTokensByProject = DailyTokenUsage & {
-  projects: DailyProjectTokens[];
-};
-
-export type UsageTrendPreset = "30d" | "12w" | "12m";
-
-export type TokenUsageBucket = {
-  key: string;
-  startDate: string;
-  endDate: string;
-  totalTokens: number;
-  projects: DailyProjectTokens[];
-};
-
-export type AnnualTokenUsageDay = DailyTokenUsage & {
-  weekIndex: number;
-  weekdayIndex: number;
-};
-
-export type AnnualTokenMonthLabel = {
-  label: string;
-  weekIndex: number;
-};
-
-export type AnnualTokenHeatmap = {
-  year: number;
-  startDate: string;
-  endDate: string;
-  days: AnnualTokenUsageDay[];
-  weekCount: number;
-  monthLabels: AnnualTokenMonthLabel[];
-};
-
-const shortMonthLabels = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
+export const usagePeriods: ReadonlyArray<{ id: UsagePeriod; label: string; days: number | null }> = [
+  { id: "7d", label: "7D", days: 7 },
+  { id: "30d", label: "30D", days: 30 },
+  { id: "90d", label: "90D", days: 90 },
+  { id: "all", label: "All", days: null },
 ];
+
+export type UsageWindow = {
+  /** Inclusive UTC day, YYYY-MM-DD. */
+  start: string;
+  /** Inclusive UTC day, YYYY-MM-DD. */
+  end: string;
+  sessions: SessionSummary[];
+};
+
+export type UsageSummary = {
+  costUsd: number;
+  tokens: number;
+  sessions: number;
+  projects: number;
+};
+
+export type UsageDelta =
+  | { ratio: number; kind: "up" | "down" | "flat" }
+  | { ratio: null; kind: "new" };
+
+export type DailyProjectCost = { project: string; costUsd: number };
+
+export type DailyCost = {
+  date: string;
+  costUsd: number;
+  tokens: number;
+  sessions: number;
+  /** Sorted by cost, descending. */
+  projects: DailyProjectCost[];
+};
+
+export type UsageRank = {
+  name: string;
+  costUsd: number;
+  tokens: number;
+  sessions: number;
+  /** Share of total cost across all ranks, 0..1. */
+  share: number;
+};
+
+export type WeekdayHourCell = { costUsd: number; sessions: number };
+
+export type LocalClock = (timestamp: string) => { weekday: number; hour: number };
+
+const dayMs = 86_400_000;
 
 function toUtcDay(timestamp: string) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
-function addUtcDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
+function shiftUtcDay(day: string, days: number) {
+  return new Date(new Date(`${day}T00:00:00.000Z`).getTime() + days * dayMs).toISOString().slice(0, 10);
 }
 
-function addUtcMonths(date: Date, months: number) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+function dayRange(start: string, end: string) {
+  const days: string[] = [];
+  for (let day = start; day <= end; day = shiftUtcDay(day, 1)) days.push(day);
+  return days;
 }
 
-function toUtcWeekStart(date: string) {
-  const value = new Date(`${date}T00:00:00.000Z`);
-  const mondayOffset = (value.getUTCDay() + 6) % 7;
-  value.setUTCDate(value.getUTCDate() - mondayOffset);
-  return value.toISOString().slice(0, 10);
+function latestUtcDay(sessions: SessionSummary[]) {
+  return sessions.reduce<string | null>((latest, s) => {
+    const day = toUtcDay(s.timestamp);
+    return latest === null || day > latest ? day : latest;
+  }, null);
 }
 
-function utcDateFromDay(date: string) {
-  return new Date(`${date}T00:00:00.000Z`);
+function earliestUtcDay(sessions: SessionSummary[], fallback: string) {
+  return sessions.reduce((earliest, s) => {
+    const day = toUtcDay(s.timestamp);
+    return day < earliest ? day : earliest;
+  }, fallback);
 }
 
-function toUtcDateOnly(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function daysInUtcYear(year: number) {
-  const start = Date.UTC(year, 0, 1);
-  const end = Date.UTC(year + 1, 0, 1);
-  return Math.round((end - start) / 86_400_000);
-}
-
-function utcDayOffset(start: Date, date: Date) {
-  const startTime = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
-  return Math.floor((date.getTime() - startTime) / 86_400_000);
-}
-
-function latestTokenYear(days: DailyTokenUsage[]) {
-  return days.reduce<number | undefined>((latestYear, day) => {
-    const year = utcDateFromDay(day.date).getUTCFullYear();
-    return latestYear === undefined ? year : Math.max(latestYear, year);
-  }, undefined);
-}
-
-function latestTokenDate(days: DailyTokenUsage[]) {
-  return days.reduce<string | undefined>((latestDate, day) => {
-    return latestDate === undefined ? day.date : latestDate > day.date ? latestDate : day.date;
-  }, undefined);
-}
-
-function costBucketKey(date: string, granularity: CostTrendGranularity) {
-  if (granularity === "day") {
-    return date;
-  }
-  if (granularity === "week") {
-    return toUtcWeekStart(date);
-  }
-  if (granularity === "month") {
-    return date.slice(0, 7);
-  }
-  if (granularity === "year") {
-    return date.slice(0, 4);
-  }
-  return "cumulative";
-}
-
-function dayRange(sessions: SessionSummary[]) {
-  if (sessions.length === 0) {
-    return [];
-  }
-
-  const days = sessions.map((session) => toUtcDay(session.timestamp)).sort();
-  const start = new Date(`${days[0]}T00:00:00.000Z`);
-  const end = new Date(`${days[days.length - 1]}T00:00:00.000Z`);
-  const range: string[] = [];
-
-  for (let cursor = start; cursor <= end; cursor = addUtcDays(cursor, 1)) {
-    range.push(cursor.toISOString().slice(0, 10));
-  }
-
-  return range;
-}
-
-export function aggregateDailyCostByProject(sessions: SessionSummary[]): DailyCostByProject[] {
-  const totals = new Map<string, Map<string, number>>();
-
-  for (const session of sessions) {
-    const day = toUtcDay(session.timestamp);
-    const projectTotals = totals.get(day) ?? new Map<string, number>();
-    projectTotals.set(
-      session.project,
-      (projectTotals.get(session.project) ?? 0) + session.totalCostUsd,
-    );
-    totals.set(day, projectTotals);
-  }
-
-  return dayRange(sessions).map((date) => {
-    const projects = Array.from(totals.get(date)?.entries() ?? [])
-      .map(([project, costUsd]) => ({ project, costUsd }))
-      .sort((left, right) => right.costUsd - left.costUsd || left.project.localeCompare(right.project));
-
-    return {
-      date,
-      totalCostUsd: projects.reduce((sum, project) => sum + project.costUsd, 0),
-      projects,
-    };
-  });
-}
-
-export function bucketCostByProject(
-  days: DailyCostByProject[],
-  granularity: CostTrendGranularity,
-): CostByProjectBucket[] {
-  const buckets = new Map<string, { startDate: string; endDate: string; projects: Map<string, number> }>();
-
-  for (const day of days) {
-    const key = costBucketKey(day.date, granularity);
-    const bucket = buckets.get(key) ?? {
-      startDate: day.date,
-      endDate: day.date,
-      projects: new Map<string, number>(),
-    };
-
-    bucket.startDate = bucket.startDate < day.date ? bucket.startDate : day.date;
-    bucket.endDate = bucket.endDate > day.date ? bucket.endDate : day.date;
-
-    for (const project of day.projects) {
-      bucket.projects.set(
-        project.project,
-        (bucket.projects.get(project.project) ?? 0) + project.costUsd,
-      );
-    }
-
-    buckets.set(key, bucket);
-  }
-
-  return Array.from(buckets.entries()).map(([key, bucket]) => {
-    const projects = Array.from(bucket.projects.entries())
-      .map(([project, costUsd]) => ({ project, costUsd }))
-      .sort((left, right) => right.costUsd - left.costUsd || left.project.localeCompare(right.project));
-
-    return {
-      key,
-      startDate: bucket.startDate,
-      endDate: bucket.endDate,
-      totalCostUsd: projects.reduce((sum, project) => sum + project.costUsd, 0),
-      projects,
-    };
-  });
-}
-
-export function aggregateDailyTokens(sessions: SessionSummary[]): DailyTokenUsage[] {
-  const totals = new Map<string, number>();
-
-  for (const session of sessions) {
-    const day = toUtcDay(session.timestamp);
-    totals.set(day, (totals.get(day) ?? 0) + session.totalTokens);
-  }
-
-  return dayRange(sessions).map((date) => ({
-    date,
-    totalTokens: totals.get(date) ?? 0,
-  }));
-}
-
-export function aggregateDailyTokensByProject(
+/**
+ * The selected window anchored on the latest recorded day, plus the
+ * equally long window right before it (null for `all`).
+ */
+export function splitUsagePeriod(
   sessions: SessionSummary[],
-): DailyTokensByProject[] {
-  const totals = new Map<string, Map<string, number>>();
+  period: UsagePeriod,
+): { current: UsageWindow; previous: UsageWindow | null } {
+  const end = latestUtcDay(sessions) ?? "1970-01-01";
+  const spec = usagePeriods.find((p) => p.id === period) ?? usagePeriods[1];
 
-  for (const session of sessions) {
-    const day = toUtcDay(session.timestamp);
-    const projectTotals = totals.get(day) ?? new Map<string, number>();
-    projectTotals.set(
-      session.project,
-      (projectTotals.get(session.project) ?? 0) + session.totalTokens,
-    );
-    totals.set(day, projectTotals);
+  if (spec.days === null) {
+    return { current: { start: earliestUtcDay(sessions, end), end, sessions }, previous: null };
   }
 
-  return dayRange(sessions).map((date) => {
-    const projects = Array.from(totals.get(date)?.entries() ?? [])
-      .map(([project, tokens]) => ({ project, tokens }))
-      .sort(
-        (left, right) => right.tokens - left.tokens || left.project.localeCompare(right.project),
-      );
-
-    return {
-      date,
-      totalTokens: projects.reduce((sum, project) => sum + project.tokens, 0),
-      projects,
-    };
-  });
-}
-
-function tokenTrendRanges(
-  latestDate: string,
-  preset: UsageTrendPreset,
-): Array<Pick<TokenUsageBucket, "key" | "startDate" | "endDate">> {
-  const latest = utcDateFromDay(latestDate);
-
-  if (preset === "30d") {
-    return Array.from({ length: 30 }, (_, index) => {
-      const date = toUtcDateOnly(addUtcDays(latest, index - 29));
-      return { key: date, startDate: date, endDate: date };
+  const start = shiftUtcDay(end, -(spec.days - 1));
+  const previousEnd = shiftUtcDay(start, -1);
+  const previousStart = shiftUtcDay(previousEnd, -(spec.days - 1));
+  const within = (a: string, b: string) =>
+    sessions.filter((s) => {
+      const day = toUtcDay(s.timestamp);
+      return day >= a && day <= b;
     });
-  }
-
-  if (preset === "12w") {
-    const firstWeekStart = addUtcDays(latest, -(12 * 7 - 1));
-    return Array.from({ length: 12 }, (_, index) => {
-      const start = addUtcDays(firstWeekStart, index * 7);
-      const end = addUtcDays(start, 6);
-      const startDate = toUtcDateOnly(start);
-
-      return {
-        key: startDate,
-        startDate,
-        endDate: toUtcDateOnly(end),
-      };
-    });
-  }
-
-  const firstMonth = new Date(
-    Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth() - 11, 1),
-  );
-
-  return Array.from({ length: 12 }, (_, index) => {
-    const start = addUtcMonths(firstMonth, index);
-    const monthEnd = new Date(
-      Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0),
-    );
-    const end = monthEnd > latest ? latest : monthEnd;
-    const startDate = toUtcDateOnly(start);
-
-    return {
-      key: startDate.slice(0, 7),
-      startDate,
-      endDate: toUtcDateOnly(end),
-    };
-  });
-}
-
-export function bucketTokenUsageByProject(
-  days: DailyTokensByProject[],
-  preset: UsageTrendPreset,
-): TokenUsageBucket[] {
-  const latestDate = latestTokenDate(days);
-  if (latestDate === undefined) {
-    return [];
-  }
-
-  return tokenTrendRanges(latestDate, preset).map((range) => {
-    const projectTotals = new Map<string, number>();
-
-    for (const day of days) {
-      if (day.date < range.startDate || day.date > range.endDate) {
-        continue;
-      }
-      for (const project of day.projects) {
-        projectTotals.set(
-          project.project,
-          (projectTotals.get(project.project) ?? 0) + project.tokens,
-        );
-      }
-    }
-
-    const projects = Array.from(projectTotals.entries())
-      .map(([project, tokens]) => ({ project, tokens }))
-      .sort(
-        (left, right) => right.tokens - left.tokens || left.project.localeCompare(right.project),
-      );
-
-    return {
-      ...range,
-      totalTokens: projects.reduce((sum, project) => sum + project.tokens, 0),
-      projects,
-    };
-  });
-}
-
-function buildTokenHeatmapForRange(
-  days: DailyTokenUsage[],
-  start: Date,
-  end: Date,
-): AnnualTokenHeatmap {
-  const totals = new Map<string, number>();
-  const startDate = toUtcDateOnly(start);
-  const endDate = toUtcDateOnly(end);
-
-  for (const day of days) {
-    if (day.date < startDate || day.date > endDate) {
-      continue;
-    }
-    totals.set(day.date, (totals.get(day.date) ?? 0) + day.totalTokens);
-  }
-
-  const firstWeekday = start.getUTCDay();
-  const dayCount = utcDayOffset(start, end) + 1;
-  const weekCount = Math.ceil((dayCount + firstWeekday) / 7);
-  const heatmapDays: AnnualTokenUsageDay[] = [];
-
-  for (let dayIndex = 0; dayIndex < dayCount; dayIndex += 1) {
-    const date = addUtcDays(start, dayIndex);
-    const dateKey = toUtcDateOnly(date);
-
-    heatmapDays.push({
-      date: dateKey,
-      totalTokens: totals.get(dateKey) ?? 0,
-      weekdayIndex: date.getUTCDay(),
-      weekIndex: Math.floor((dayIndex + firstWeekday) / 7),
-    });
-  }
-
-  const monthLabels: AnnualTokenMonthLabel[] = [];
-  for (
-    let month = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-    month <= end;
-    month = addUtcMonths(month, 1)
-  ) {
-    monthLabels.push({
-      label: shortMonthLabels[month.getUTCMonth()],
-      weekIndex: Math.floor((utcDayOffset(start, month) + firstWeekday) / 7),
-    });
-  }
 
   return {
-    year: end.getUTCFullYear(),
-    startDate,
-    endDate,
-    days: heatmapDays,
-    weekCount,
-    monthLabels,
+    current: { start, end, sessions: within(start, end) },
+    previous: { start: previousStart, end: previousEnd, sessions: within(previousStart, previousEnd) },
   };
 }
 
-export function buildAnnualTokenHeatmap(
-  days: DailyTokenUsage[],
-  year = latestTokenYear(days),
-): AnnualTokenHeatmap | null {
-  if (year === undefined) {
-    return null;
-  }
-
-  const start = new Date(Date.UTC(year, 0, 1));
-  const end = addUtcDays(start, daysInUtcYear(year) - 1);
-
-  return buildTokenHeatmapForRange(days, start, end);
+export function summarizeUsage(sessions: SessionSummary[]): UsageSummary {
+  return {
+    costUsd: sessions.reduce((sum, s) => sum + s.totalCostUsd, 0),
+    tokens: sessions.reduce((sum, s) => sum + s.totalTokens, 0),
+    sessions: sessions.length,
+    projects: new Set(sessions.map((s) => s.project)).size,
+  };
 }
 
-export function buildTrailingAnnualTokenHeatmap(
-  days: DailyTokenUsage[],
-  latestDate = latestTokenDate(days),
-): AnnualTokenHeatmap | null {
-  if (latestDate === undefined) {
-    return null;
-  }
-
-  const latest = utcDateFromDay(latestDate);
-  const start = new Date(Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth() - 11, 1));
-  const end = new Date(Date.UTC(latest.getUTCFullYear(), latest.getUTCMonth() + 1, 0));
-
-  return buildTokenHeatmapForRange(days, start, end);
+/** Period-over-period change. `null` previous means "no comparison window". */
+export function usageDelta(current: number, previous: number | null): UsageDelta | null {
+  if (previous === null) return null;
+  if (previous === 0) return current === 0 ? { ratio: 0, kind: "flat" } : { ratio: null, kind: "new" };
+  const ratio = current / previous - 1;
+  if (Math.abs(ratio) < 0.005) return { ratio, kind: "flat" };
+  return { ratio, kind: ratio > 0 ? "up" : "down" };
 }
 
-export function aggregateCostByModel(sessions: SessionSummary[]): ModelCost[] {
-  const totals = new Map<string, { costUsd: number; tokens: number }>();
+export function aggregateDailyCost(window: UsageWindow): DailyCost[] {
+  const byDay = new Map<string, { costUsd: number; tokens: number; sessions: number; projects: Map<string, number> }>();
+  for (const date of dayRange(window.start, window.end)) {
+    byDay.set(date, { costUsd: 0, tokens: 0, sessions: 0, projects: new Map() });
+  }
+  for (const s of window.sessions) {
+    const day = byDay.get(toUtcDay(s.timestamp));
+    if (!day) continue;
+    day.costUsd += s.totalCostUsd;
+    day.tokens += s.totalTokens;
+    day.sessions += 1;
+    day.projects.set(s.project, (day.projects.get(s.project) ?? 0) + s.totalCostUsd);
+  }
+  return Array.from(byDay.entries()).map(([date, day]) => ({
+    date,
+    costUsd: day.costUsd,
+    tokens: day.tokens,
+    sessions: day.sessions,
+    projects: Array.from(day.projects.entries())
+      .map(([project, costUsd]) => ({ project, costUsd }))
+      .sort((a, b) => b.costUsd - a.costUsd || a.project.localeCompare(b.project)),
+  }));
+}
 
-  for (const session of sessions) {
-    for (const model of session.modelBreakdown) {
-      const current = totals.get(model.model) ?? { costUsd: 0, tokens: 0 };
-      current.costUsd += model.costUsd;
-      current.tokens += model.tokens;
-      totals.set(model.model, current);
+function finishRanks(map: Map<string, Omit<UsageRank, "share">>): UsageRank[] {
+  const total = Array.from(map.values()).reduce((sum, r) => sum + r.costUsd, 0);
+  return Array.from(map.values())
+    .map((r) => ({ ...r, share: total === 0 ? 0 : r.costUsd / total }))
+    .sort((a, b) => b.costUsd - a.costUsd || a.name.localeCompare(b.name));
+}
+
+export function rankProjectsByCost(sessions: SessionSummary[]): UsageRank[] {
+  const map = new Map<string, Omit<UsageRank, "share">>();
+  for (const s of sessions) {
+    const row = map.get(s.project) ?? { name: s.project, costUsd: 0, tokens: 0, sessions: 0 };
+    row.costUsd += s.totalCostUsd;
+    row.tokens += s.totalTokens;
+    row.sessions += 1;
+    map.set(s.project, row);
+  }
+  return finishRanks(map);
+}
+
+export function rankModelsByCost(sessions: SessionSummary[]): UsageRank[] {
+  const map = new Map<string, Omit<UsageRank, "share">>();
+  for (const s of sessions) {
+    for (const m of s.modelBreakdown) {
+      const row = map.get(m.model) ?? { name: m.model, costUsd: 0, tokens: 0, sessions: 0 };
+      row.costUsd += m.costUsd;
+      row.tokens += m.tokens;
+      row.sessions += 1;
+      map.set(m.model, row);
     }
   }
-
-  return Array.from(totals.entries())
-    .map(([model, usage]) => ({ model, costUsd: usage.costUsd, tokens: usage.tokens }))
-    .sort((left, right) => right.costUsd - left.costUsd || left.model.localeCompare(right.model));
+  return finishRanks(map);
 }
 
-export function aggregateModelDistribution(sessions: SessionSummary[]): ModelDistribution[] {
-  const models = aggregateCostByModel(sessions);
-  const totalCostUsd = models.reduce((sum, model) => sum + model.costUsd, 0);
-  const totalTokens = models.reduce((sum, model) => sum + model.tokens, 0);
+export const localClock: LocalClock = (timestamp) => {
+  const date = new Date(timestamp);
+  return { weekday: date.getDay(), hour: date.getHours() };
+};
 
-  return models.map((model) => ({
-    ...model,
-    costShare: totalCostUsd === 0 ? 0 : model.costUsd / totalCostUsd,
-    tokenShare: totalTokens === 0 ? 0 : model.tokens / totalTokens,
-  }));
+/** 7 rows (Monday first) × 24 hours. */
+export function aggregateWeekdayHourCost(
+  sessions: SessionSummary[],
+  clock: LocalClock = localClock,
+): WeekdayHourCell[][] {
+  const grid = Array.from({ length: 7 }, () =>
+    Array.from({ length: 24 }, (): WeekdayHourCell => ({ costUsd: 0, sessions: 0 })),
+  );
+  for (const s of sessions) {
+    const { weekday, hour } = clock(s.timestamp);
+    const cell = grid[(weekday + 6) % 7][hour];
+    cell.costUsd += s.totalCostUsd;
+    cell.sessions += 1;
+  }
+  return grid;
+}
+
+/**
+ * Rank-based level assignment for sequential colour: level 0 for zero,
+ * otherwise 1..levels by percentile among the non-zero values. A single
+ * outlier therefore does not push everything else into the lowest band.
+ */
+export function rankLevels(values: number[], levels = 5): (value: number) => number {
+  const sorted = values.filter((v) => v > 0).sort((a, b) => a - b);
+  return (value) => {
+    if (value <= 0 || sorted.length === 0) return 0;
+    // Upper rank: ties share the level of their last occurrence, so equal
+    // maxima all read as the top band instead of the bottom one.
+    let index = sorted.findIndex((v) => v > value) - 1;
+    if (index < -1) index = sorted.length - 1;
+    const percentile = Math.max(0, index) / Math.max(1, sorted.length - 1);
+    return Math.min(levels, Math.max(1, Math.ceil(percentile * levels)));
+  };
 }
 
 function aggregateNamedCounts(
   sessions: SessionSummary[],
-  selectCounts: (session: SessionSummary) => NamedCount[],
+  select: (session: SessionSummary) => NamedCount[],
   limit: number,
 ): NamedCount[] {
-  if (limit <= 0) {
-    return [];
-  }
-
+  if (limit <= 0) return [];
   const totals = new Map<string, number>();
-  for (const session of sessions) {
-    for (const item of selectCounts(session)) {
-      totals.set(item.name, (totals.get(item.name) ?? 0) + item.count);
-    }
+  for (const s of sessions) {
+    for (const item of select(s)) totals.set(item.name, (totals.get(item.name) ?? 0) + item.count);
   }
-
   return Array.from(totals.entries())
     .map(([name, count]) => ({ name, count }))
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
     .slice(0, limit);
 }
 
 export function aggregateToolCounts(sessions: SessionSummary[], limit = 8): NamedCount[] {
-  return aggregateNamedCounts(sessions, (session) => session.toolCounts, limit);
+  return aggregateNamedCounts(sessions, (s) => s.toolCounts, limit);
 }
 
 export function aggregateSkillCounts(sessions: SessionSummary[], limit = 8): NamedCount[] {
-  return aggregateNamedCounts(sessions, (session) => session.skillCounts, limit);
+  return aggregateNamedCounts(sessions, (s) => s.skillCounts, limit);
 }

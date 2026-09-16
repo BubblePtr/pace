@@ -11,6 +11,8 @@ type PiKpiOwnProps = {
   formatOptions?: Intl.NumberFormatOptions;
   /** Optional trend/delta annotation rendered after the value. */
   delta?: ReactNode;
+  /** Optional slot below the value row, e.g. a PiSparkline. */
+  footer?: ReactNode;
   /** stacked = label above value (dashboard tile); inline = label and value on one row. */
   layout?: "stacked" | "inline";
   /** Custom value node; replaces the formatted `value`. */
@@ -29,6 +31,7 @@ export function PiKpi({
   value,
   formatOptions,
   delta,
+  footer,
   layout = "stacked",
   children,
   valueClassName = "",
@@ -61,6 +64,11 @@ export function PiKpi({
             </span>
           ) : null}
         </dd>
+        {footer !== undefined && footer !== null ? (
+          <dd className="pi-kpi__footer" data-slot="kpi-footer">
+            {footer}
+          </dd>
+        ) : null}
       </dl>
     </Card>
   );

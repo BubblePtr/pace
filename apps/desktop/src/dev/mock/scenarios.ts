@@ -5,6 +5,7 @@ import type {
   SessionChanges,
   SessionDirectoryListing,
   SessionFileContent,
+  SessionSummary,
 } from "@pace/core";
 import { invokeBrowserFallback, type PaceRendererApi } from "@/shared/runtime";
 
@@ -58,6 +59,29 @@ const projections: PersistedSessionProjection[] = definitions.map(
     ...(item.status === "archived" ? { archivedAt: timestamp } : {}),
   }),
 );
+
+// Usage page input: one summary per projection, spread over the same days
+// with a deterministic cost/token ramp so the dashboard has a shape.
+const sessionSummaries: SessionSummary[] = projections.map((item, index) => {
+  const tokens = summary.totalTokens * (1 + (index % 5)) * (index % 3 === 0 ? 4 : 1);
+  const costUsd = (tokens / summary.totalTokens) * summary.totalCostUsd;
+  return {
+    id: item.sessionId,
+    timestamp: item.updatedAt,
+    project: item.projectId,
+    title: { kind: "text", sentence: item.title ?? item.sessionId },
+    totalCostUsd: costUsd,
+    totalTokens: tokens,
+    primaryModel: summary.model,
+    modelBreakdown: [{ model: summary.model, costUsd, tokens }],
+    toolCounts: [
+      { name: "Read", count: 3 + index },
+      { name: "Edit", count: 1 + (index % 4) },
+    ],
+    skillCounts: index % 4 === 0 ? [{ name: "code-review", count: 1 }] : [],
+    presence: item.status === "archived" ? "archived" : "active",
+  };
+});
 
 const source = "export const greeting = '你好，Pace';\n";
 const files: Record<
@@ -378,6 +402,9 @@ export function createMockApi(): PaceRendererApi {
       switch (command) {
         case "list_session_projections":
           result = projections;
+          break;
+        case "list_sessions":
+          result = sessionSummaries;
           break;
         case "resume_session":
         case "get_runtime_snapshot":

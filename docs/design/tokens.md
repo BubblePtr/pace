@@ -7,11 +7,11 @@
 组件代码只能引用**上两层**：语义桥（`var(--foreground)` 或类名 `text-foreground`）和 Astryx 一级 token（`var(--color-text-secondary)`）。原因：桥和一级 token 都会随主题解析，字面量不会；Tailwind 自带调色板（`text-gray-500`、`bg-zinc-900`）不经过 Astryx，明暗模式下必错。
 
 ```tsx
-// 正确 — pages/usage.tsx:47
-const usageKpiValueClass = "tabular-nums text-[var(--pigui-data-blue)]";
+// 正确 — pages/usage.tsx 顶部的序列色表
+const seriesColors = ["var(--pigui-data-blue)", "var(--pigui-data-orange)", /* … */];
 
-// 错误 — 调色板类不随主题走
-const usageKpiValueClass = "tabular-nums text-blue-600";
+// 错误 — 字面量与调色板类都不随主题走
+const seriesColors = ["#1677e8", "text-blue-600"];
 ```
 
 ## 语义桥（`styles.css:59-76`，就这 15 个）

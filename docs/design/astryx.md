@@ -90,7 +90,7 @@ Astryx 的 props 以 `bunx astryx component <Name>` 输出为准，本文只记�
 
 只有这几种形态，别引入 `Skeleton` / `Spinner` / `ProgressBar`（仓库 0 调用）：
 
-- **内容区还没数据**：`<EmptyState title="Loading sessions..." />`，窄处加 `isCompact`（`session-list.tsx:398`、`usage.tsx:677`）。
+- **内容区还没数据**：`<EmptyState title="Loading sessions..." />`，窄处加 `isCompact`（`session-list.tsx:398`、`usage.tsx` 的排行空态）。
 - **一个区块内部在加载**：一行 `<Text as="p" type="supporting">Loading…</Text>`（`settings.tsx:335`）。按钮触发的异步用按钮自己的 `isDisabled={mutation.isPending}`。
 - **区块内错误**：`<Text as="p" type="supporting" role="alert" style={{ color: "var(--danger)" }}>`（`settings.tsx:340`）。
 - **一次 run 失败**：`ChatRunFailure`（见 chat.md），它是仓库里唯一的 `Banner status="error"`。
