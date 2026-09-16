@@ -188,6 +188,7 @@ export function piEventBusFromUnknown(value: unknown): PiEventBus | undefined {
 }
 
 type TintinwebManager = {
+  getRecord?: (id: string) => { sessionFile?: string } | undefined;
   steer?: (id: string, message: string) => boolean;
   resume?: (
     id: string,
@@ -270,6 +271,8 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
     childSessionIdFromSessionFile(sessionFile, index, deps.resolveChildSessionId);
 
   function fromSession(detail: SessionDetail, index: SessionSummary[]): SubagentRecord[] {
+    // Upstream 0.19.0 also omits sessionFile from persisted subagents:record entries.
+    // History links therefore depend on Pace capturing and persisting the live record.
     const byAgentId = new Map<string, SubagentRecord>();
     const byToolCallId = new Map<string, SubagentRecord>();
     let clock = 0;
@@ -433,7 +436,10 @@ export function createTintinwebSubagentShim(deps: TintinwebSubagentShimDeps = {}
         (input.ownerToolCallId ? byToolCallId.get(input.ownerToolCallId) : undefined);
       const ownerToolCallId = input.ownerToolCallId || existing?.ownerToolCallId || "";
       const sourceAgentId = input.sourceAgentId || existing?.sourceAgentId;
-      const sessionFile = input.sessionFile || existing?.sessionFile;
+      // Upstream 0.19.0 omits sessionFile from events and Agent results. Retry the
+      // registry on each observation because the child may still be initializing.
+      const sessionFile = input.sessionFile || existing?.sessionFile ||
+        (sourceAgentId ? asString(tintinwebManager()?.getRecord?.(sourceAgentId)?.sessionFile) : undefined);
       const at = input.at ?? now();
       const childSessionId =
         resolveChild(sessionFile, []) || existing?.childSessionId || "";
