@@ -746,6 +746,7 @@ export function createRuntimeGatewayClient(
           projectId: input.projectId,
           cwd: input.checkout.runtimeCwd,
           checkout: input.checkout,
+          ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
         });
         const runtime: PiRuntimeHandle = {
           runtimeId: snapshot.runtimeId,

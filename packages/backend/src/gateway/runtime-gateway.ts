@@ -47,12 +47,12 @@ export type CreateRuntimeSessionInput = {
   projectId: string;
   cwd: string;
   checkout?: unknown;
+  modelSelection?: RuntimeModelSelection;
 };
 
 export type ResumeRuntimeSessionInput = CreateRuntimeSessionInput & {
   piSessionId: string;
   sessionFile: string;
-  modelSelection?: RuntimeModelSelection;
 };
 
 export type ForkRuntimeSessionInput = CreateRuntimeSessionInput & {
@@ -406,11 +406,17 @@ async function dispatchRuntimeGatewayRequest(input: {
       return { cwd };
     }
     case "create_session": {
+      const selection = params.modelSelection === undefined ? undefined : paramsRecord(params.modelSelection);
       const snapshot = await input.driver.createSession({
         sessionId: requiredString(params.sessionId, "sessionId"),
         projectId: requiredString(params.projectId, "projectId"),
         cwd: requiredString(params.cwd, "cwd"),
         checkout: params.checkout,
+        ...(selection ? { modelSelection: {
+          provider: requiredString(selection.provider, "provider"),
+          modelId: requiredString(selection.modelId, "modelId"),
+          thinkingLevel: requiredThinkingLevel(selection.thinkingLevel),
+        } } : {}),
       });
 
       input.rememberSession(snapshot);

@@ -6,6 +6,58 @@ import {
 } from "./pi-sdk-runtime-adapter";
 
 describe("Pi SDK public runtime adapter", () => {
+  it("creates a new session with the composer model and thinking level overriding defaults", async () => {
+    const model = { provider: "custom", id: "composer-model", name: "Composer model", reasoning: true };
+    const modelRuntime = {
+      getModel: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
+      getAvailableSnapshot: () => [model],
+    };
+    const session = {
+      sessionId: "pi-composer", isStreaming: false, messages: [],
+      prompt: vi.fn(async () => {}), abort: vi.fn(async () => {}),
+      dispose: vi.fn(), subscribe: () => () => {},
+    };
+    const createAgentSession = vi.fn(async () => ({ session }));
+    const createModelRuntime = vi.fn(async () => modelRuntime);
+    const factory = createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession, ModelRuntime: { create: createModelRuntime } },
+      sessionOptions: { agentDir: "/custom/agent", model: { id: "settings-default" }, thinkingLevel: "xhigh" },
+      sessionOptionsFor: async () => ({ model: { id: "project-default" }, thinkingLevel: "low" }),
+    });
+
+    const runtime = await factory({
+      sessionId: "app-composer", projectId: "p", cwd: "/repo",
+      modelSelection: { provider: "custom", modelId: "composer-model", thinkingLevel: "high" },
+    });
+
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
+      model, thinkingLevel: "high", modelRuntime,
+    }));
+    expect(createModelRuntime).toHaveBeenCalledWith({
+      authPath: "/custom/agent/auth.json", modelsPath: "/custom/agent/models.json",
+    });
+    await runtime.dispose?.();
+  });
+
+  it.each(["missing", "unavailable", "unsupported thinking"])("rejects a %s composer selection before creating any Pi session", async (condition) => {
+    const model = { provider: "custom", id: "selected", name: "Selected", reasoning: false };
+    const createAgentSession = vi.fn();
+    const factory = createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession },
+      sessionOptions: { modelRuntime: {
+        getModel: () => condition === "missing" ? undefined : model,
+        getAvailableSnapshot: () => condition === "unavailable" ? [] : [model],
+      } },
+    });
+    await expect(factory({
+      sessionId: "app", projectId: "p", cwd: "/repo",
+      modelSelection: { provider: "custom", modelId: "selected", thinkingLevel: "high" },
+    })).rejects.toThrow(condition === "unsupported thinking"
+      ? 'Thinking level "high" is unavailable for "custom/selected".'
+      : 'Model "custom/selected" is unavailable.');
+    expect(createAgentSession).not.toHaveBeenCalled();
+  });
+
   it("rejects new prompts while closing and permits retry after cancellation failed", async () => {
     let fail!: (error: Error) => void;
     const cancellation = new Promise<void>((_, reject) => { fail = reject; });
@@ -1074,6 +1126,28 @@ describe("Pi SDK public runtime adapter", () => {
     expect(setThinkingLevel).toHaveBeenCalledWith("off");
   });
 
+  it("does not write model changes when reapplying the current model", async () => {
+    const model = { provider: "custom", id: "selected", name: "Selected", reasoning: true };
+    let thinkingLevel = "low";
+    const session = {
+      sessionId: "pi-current", isStreaming: false, messages: [], model,
+      get thinkingLevel() { return thinkingLevel; },
+      modelRuntime: { getModel: () => model, getAvailableSnapshot: () => [model] },
+      setModel: vi.fn(async () => {}),
+      setThinkingLevel: vi.fn((level: unknown) => { thinkingLevel = String(level); }),
+      prompt: vi.fn(async () => {}), abort: vi.fn(async () => {}), dispose: vi.fn(), subscribe: () => () => {},
+    };
+    const runtime = await createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession: async () => ({ session }) },
+    })({ sessionId: "app", projectId: "p", cwd: "/repo" });
+    const selection = { provider: "custom", modelId: "selected", thinkingLevel: "high" as const };
+    await expect(runtime.configureModel?.(selection)).resolves.toMatchObject({ selected: selection });
+    await runtime.configureModel?.(selection);
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinkingLevel).toHaveBeenCalledTimes(1);
+    await runtime.dispose?.();
+  });
+
   it("restores the persisted model pair before exposing a resumed runtime", async () => {
     const models = [
       {
@@ -1130,7 +1204,7 @@ describe("Pi SDK public runtime adapter", () => {
       },
     });
 
-    expect(setModel).toHaveBeenCalledWith(models[0]);
+    expect(setModel).not.toHaveBeenCalled();
     expect(setThinkingLevel).toHaveBeenCalledWith("high");
     expect(runtime.modelControls?.selected).toEqual({
       provider: "anthropic",

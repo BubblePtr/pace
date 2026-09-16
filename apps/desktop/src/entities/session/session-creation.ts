@@ -202,6 +202,7 @@ export async function createSessionFromDraft(
       sessionId: projection.id,
       projectId: draftProjectId,
       checkout,
+      ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
     });
     const piState = await input.bridge.createPiSessionState({
       runtimeId: runtime.runtimeId,

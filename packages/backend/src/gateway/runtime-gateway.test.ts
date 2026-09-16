@@ -11,7 +11,9 @@ import {
 import { createInMemorySessionEventJournal } from "../persistence/session-event-journal";
 import { createInMemorySessionProjectionStore } from "../persistence/session-projection-store";
 import { createPiSdkDriver } from "../drivers/pi-sdk-driver";
-import { createPublicPiSdkRuntimeResumer } from "../drivers/pi-sdk-runtime-adapter";
+import { createPublicPiSdkRuntimeFactory, createPublicPiSdkRuntimeResumer } from "../drivers/pi-sdk-runtime-adapter";
+import { createRuntimeGatewayClient } from "@/entities/runtime/runtime-gateway-client";
+import { createSessionFromDraft, createInMemorySessionProjectionStore as createDraftProjectionStore } from "@/entities/session/session-creation";
 
 let defaultDataDir: string;
 beforeEach(async () => {
@@ -350,6 +352,42 @@ function agentEvent(
 }
 
 describe("Runtime Gateway service", () => {
+  it("carries the Draft model through the client and gateway into Pi creation without resetting it", async () => {
+    const model = { provider: "custom", id: "composer", name: "Composer", reasoning: true };
+    const selection = { provider: "custom", modelId: "composer", thinkingLevel: "high" as const };
+    const modelRuntime = { getModel: () => model, getAvailableSnapshot: () => [model] };
+    const session = {
+      sessionId: "pi-composer", isStreaming: false, messages: [], model, thinkingLevel: "high",
+      modelRuntime, setModel: vi.fn(async () => {}), setThinkingLevel: vi.fn(),
+      prompt: vi.fn(async () => {}), abort: vi.fn(async () => {}), dispose: vi.fn(), subscribe: () => () => {},
+    };
+    const createAgentSession = vi.fn(async () => ({ session }));
+    const driver = createPiSdkDriver({ runtimeFactory: createPublicPiSdkRuntimeFactory({
+      sdk: { createAgentSession, ModelRuntime: { create: async () => modelRuntime } },
+    }) });
+    const gateway = createRuntimeGatewayService({ driver });
+    const bridge = createRuntimeGatewayClient({
+      invoke: async <T,>(method: string, params?: Record<string, unknown>) => {
+        const response = await gateway.handleRequest({ id: method, method, params });
+        if (response.error) throw new Error(response.error);
+        return response.result as T;
+      },
+      onBackendEvent: listener => gateway.onEvent(listener),
+    });
+    const result = await createSessionFromDraft({
+      bridge, projections: createDraftProjectionStore(), modelSelection: selection,
+      draft: { projectId: "p", prompt: "Hello", updatedAt: "2026-09-16T00:00:00.000Z" },
+      project: { id: "p", projectRoot: "/repo" }, idFactory: () => "app-composer",
+    });
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({ model, thinkingLevel: "high" }));
+    expect(session.prompt).toHaveBeenCalledWith("Hello");
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinkingLevel).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    if (result.ok) result.unsubscribeRuntimeEvents();
+    await driver.dispose?.();
+  });
+
   it("dispatches Pace runtime methods and emits product event envelopes", async () => {
     const service = createRuntimeGatewayService({
       driver: createFakeRuntimeDriver(),
@@ -2366,4 +2404,3 @@ describe("send_subagent / stop_subagent", () => {
     expect(stopSubagent).not.toHaveBeenCalled();
   });
 });
-
