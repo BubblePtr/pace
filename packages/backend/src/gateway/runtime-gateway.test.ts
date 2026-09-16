@@ -8,7 +8,7 @@ import {
   type PiRuntimeDriver,
   type RuntimeGatewayDriverEvent,
 } from "./runtime-gateway";
-import { createInMemorySessionEventJournal } from "../persistence/session-event-journal";
+import { createFileSessionEventJournal, createInMemorySessionEventJournal } from "../persistence/session-event-journal";
 import { createInMemorySessionProjectionStore } from "../persistence/session-projection-store";
 import { createPiSdkDriver } from "../drivers/pi-sdk-driver";
 import { createPublicPiSdkRuntimeResumer } from "../drivers/pi-sdk-runtime-adapter";
@@ -2249,6 +2249,45 @@ describe("send_subagent / stop_subagent", () => {
     });
     return { service, driver, sendSubagent, stopSubagent, stopRun };
   }
+
+  it("replays a completed child's resolved session id from disk after the live runtime is gone", async () => {
+    const driver = createFakeRuntimeDriver();
+    const journal = createFileSessionEventJournal({ dataDir: defaultDataDir });
+    const projections = createInMemorySessionProjectionStore();
+    const service = createRuntimeGatewayService({ driver, journal, projections });
+    await service.handleRequest({
+      id: "create", method: "create_session",
+      params: { sessionId: "app-session-1", projectId: "p", cwd: "/repo" },
+    });
+    for (const [phase, record] of [
+      ["start", childRecord({ childSessionId: "" })],
+      ["end", childRecord({ state: "completed", sessionFile: "/pi/sessions/child-1.jsonl" })],
+      ["update", childRecord({ state: "completed", sessionFile: "/pi/sessions/child-1.jsonl" })],
+    ] as const) {
+      driver.emitDriverEvent({
+        piSessionId: "pi-session-1", type: "subagent",
+        payload: { type: "subagent", phase, record, surface: "hidden", origin: "sdk" },
+      });
+    }
+    await journal.flush?.();
+    const restarted = createRuntimeGatewayService({
+      driver: { ...createFakeRuntimeDriver(), hasSession: () => false },
+      journal: createFileSessionEventJournal({ dataDir: defaultDataDir }),
+      projections,
+    });
+    await expect(restarted.handleRequest({
+      id: "replay", method: "get_runtime_snapshot", params: { piSessionId: "pi-session-1" },
+    })).resolves.toMatchObject({
+      result: {
+        executionState: "cold",
+        events: [
+          { payload: { phase: "start", record: { childSessionId: "" } } },
+          { payload: { phase: "end", record: { childSessionId: "child-1", state: "completed" } } },
+          { payload: { phase: "update", record: { childSessionId: "child-1", state: "completed" } } },
+        ],
+      },
+    });
+  });
 
   it("routes send and stop to the driver when the record advertised the control", async () => {
     const { service, driver, sendSubagent, stopSubagent } = await liveGateway();

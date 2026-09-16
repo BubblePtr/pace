@@ -134,6 +134,79 @@ describe("tintinweb payload mapping", () => {
 });
 
 describe("tintinweb observe() live mapping", () => {
+  const managerKey = Symbol.for("pi-subagents:manager");
+  afterEach(() => {
+    delete (globalThis as Record<symbol, unknown>)[managerKey];
+  });
+
+  it.each(["started", "completed", "failed", "tool result"])(
+    "resolves the child through getRecord when the path first becomes available at %s",
+    (availableAt) => {
+      const bus = createMemoryBus();
+      let onSessionEvent: (event: unknown) => void = () => {};
+      let record: { sessionFile?: string } | undefined;
+      (globalThis as Record<symbol, unknown>)[managerKey] = {
+        getRecord: (id: string) => id === "ag-late" ? record : undefined,
+      };
+      const sessionFile = "/pi/sessions/timestamp_child-late.jsonl";
+      const shim = createTintinwebSubagentShim({
+        events: bus,
+        subscribeSession: (listener) => { onSessionEvent = listener; return () => {}; },
+        resolveChildSessionId: (file) => file === sessionFile ? "child-late" : undefined,
+      });
+      const { emitted, stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
+      onSessionEvent({ type: "tool_execution_start", toolName: "Agent", toolCallId: "call-late", args: {} });
+      bus.emit("subagents:created", { id: "ag-late" });
+      record = availableAt === "started" ? { sessionFile } : {};
+      bus.emit("subagents:started", { id: "ag-late" });
+      expect(emitted[emitted.length - 1]?.record.childSessionId).toBe(availableAt === "started" ? "child-late" : "");
+      if (availableAt !== "started") {
+        record = { sessionFile };
+        if (availableAt === "tool result") {
+          onSessionEvent({
+            type: "tool_execution_end", toolName: "Agent", toolCallId: "call-late",
+            result: { details: { agentId: "ag-late", status: "completed" } },
+          });
+        } else {
+          bus.emit(`subagents:${availableAt}`, { id: "ag-late", status: availableAt === "failed" ? "error" : "completed" });
+        }
+      }
+      expect(emitted[emitted.length - 1]?.record).toMatchObject({ childSessionId: "child-late", sessionFile });
+      // A later event must retain the captured path even after the registry is gone.
+      delete (globalThis as Record<symbol, unknown>)[managerKey];
+      onSessionEvent({
+        type: "tool_execution_end", toolName: "Agent", toolCallId: "call-late",
+        result: { details: { agentId: "ag-late", status: "completed" } },
+      });
+      expect(emitted[emitted.length - 1]?.record.childSessionId).toBe("child-late");
+      stop();
+    },
+  );
+
+  it.each([undefined, {}, { getRecord: () => undefined }, { getRecord: () => ({}) }])(
+    "keeps childSessionId empty when the registry cannot provide a path: %j",
+    (manager) => {
+      (globalThis as Record<symbol, unknown>)[managerKey] = manager;
+      const bus = createMemoryBus();
+      let onSessionEvent: (event: unknown) => void = () => {};
+      const shim = createTintinwebSubagentShim({
+        events: bus,
+        subscribeSession: (listener) => { onSessionEvent = listener; return () => {}; },
+      });
+      const { emitted, stop } = collect((onRecord) => shim.observe({ parentSessionId, onRecord }));
+      onSessionEvent({ type: "tool_execution_start", toolName: "Agent", toolCallId: "call-missing", args: {} });
+      bus.emit("subagents:started", { id: "ag-missing" });
+      bus.emit("subagents:failed", { id: "ag-missing", status: "error" });
+      onSessionEvent({
+        type: "tool_execution_end", toolName: "Agent", toolCallId: "call-missing",
+        result: { details: { agentId: "ag-missing", status: "error" } },
+      });
+      expect(emitted).toHaveLength(3);
+      expect(emitted.every(({ record }) => record.childSessionId === "")).toBe(true);
+      stop();
+    },
+  );
+
   it("correlates a foreground Agent tool with started/completed events by toolCallId and plugin id", () => {
     const bus = createMemoryBus();
     const sessionListeners: Array<(event: unknown) => void> = [];
@@ -159,10 +232,12 @@ describe("tintinweb observe() live mapping", () => {
       });
     }
     bus.emit("subagents:started", { id: "ag-fg", type: "Explore", description: "Look around" });
+    (globalThis as Record<symbol, unknown>)[managerKey] = {
+      getRecord: (id: string) => id === "ag-fg" ? { sessionFile: "/pi/sessions/child-fg.jsonl" } : undefined,
+    };
     bus.emit("subagents:completed", {
       id: "ag-fg",
       usage: { input: 3, output: 5, cacheRead: 0, totalTokens: 8, cost: { total: 0.002 } },
-      sessionFile: "/pi/sessions/child-fg.jsonl",
     });
     for (const listener of sessionListeners) {
       listener({
@@ -171,7 +246,7 @@ describe("tintinweb observe() live mapping", () => {
         toolName: "Agent",
         result: {
           content: [{ type: "text", text: "done" }],
-          details: { agentId: "ag-fg", status: "completed", sessionFile: "/pi/sessions/child-fg.jsonl" },
+          details: { agentId: "ag-fg", status: "completed" },
         },
       });
     }
@@ -234,10 +309,12 @@ describe("tintinweb observe() live mapping", () => {
         },
       });
     }
+    (globalThis as Record<symbol, unknown>)[managerKey] = {
+      getRecord: (id: string) => id === "ag-bg" ? { sessionFile: "/pi/sessions/ag-bg.jsonl" } : undefined,
+    };
     bus.emit("subagents:completed", {
       id: "ag-bg",
       usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0.001 } },
-      sessionFile: "/pi/sessions/ag-bg.jsonl",
     });
 
     expect(emitted[0]).toMatchObject({ phase: "start", record: { state: "created", ownerToolCallId: "call-bg" } });
@@ -278,7 +355,10 @@ describe("tintinweb observe() live mapping", () => {
       });
     }
     bus.emit("subagents:started", { id: "ag-1", type: "Explore", description: "First" });
-    bus.emit("subagents:completed", { id: "ag-1", sessionFile: "/pi/sessions/child.jsonl" });
+    (globalThis as Record<symbol, unknown>)[managerKey] = {
+      getRecord: (id: string) => id === "ag-1" ? { sessionFile: "/pi/sessions/child.jsonl" } : undefined,
+    };
+    bus.emit("subagents:completed", { id: "ag-1" });
     for (const listener of sessionListeners) {
       listener({
         type: "tool_execution_start",
@@ -594,7 +674,6 @@ describe("tintinweb send/stop", () => {
       id: "ag-ctl",
       type: "Explore",
       description: "Look",
-      sessionFile: "/pi/sessions/child-ctl.jsonl",
     });
   }
 
@@ -644,6 +723,9 @@ describe("tintinweb send/stop", () => {
     const bus = createMemoryBus();
     const agents = new Map([["ag-ctl", { status: "running", steered: [] as string[], stopped: false }]]);
     installFakeTintinwebRpc(bus, agents);
+    (globalThis as Record<symbol, unknown>)[MANAGER_KEY] = {
+      getRecord: (id: string) => id === "ag-ctl" ? { sessionFile: "/pi/sessions/child-ctl.jsonl" } : undefined,
+    };
     const { shim, sessionListeners, emitted, stop } = observeShim(bus, { resolveChild: true });
     startChild(bus, sessionListeners);
     expect(emitted[0]?.record.capabilities).toEqual({ stop: true });
@@ -730,7 +812,6 @@ describe("tintinweb send/stop", () => {
       id: "ag-ctl",
       type: "Explore",
       description: "Look",
-      sessionFile: "/pi/sessions/child-ctl.jsonl",
     });
     expect(exposed.emitted[exposed.emitted.length - 1]).toMatchObject({
       phase: "update",
