@@ -5,6 +5,7 @@
 import { createAgentRuntimeEventNormalizer } from "../gateway/agent-runtime-event-normalizer";
 import { createTintinwebSubagentShim, piEventBusFromUnknown } from "../subagent/tintinweb";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   RuntimeContextUsage,
   RuntimeGatewayQueuedMessage,
@@ -135,6 +136,7 @@ export type PublicPiSdkCreateAgentSessionOptions = {
   agentDir?: string;
   authStorage?: unknown;
   modelRegistry?: unknown;
+  modelRuntime?: PublicPiSdkModelRuntime;
   model?: unknown;
   thinkingLevel?: unknown;
   scopedModels?: unknown;
@@ -148,6 +150,9 @@ export type PublicPiSdkCreateAgentSessionOptions = {
 };
 
 export type PublicPiSdkModule = {
+  ModelRuntime?: {
+    create(options?: { authPath?: string; modelsPath?: string }): Promise<PublicPiSdkModelRuntime>;
+  };
   createAgentSession(options?: PublicPiSdkCreateAgentSessionOptions): Promise<{
     session: PublicPiSdkAgentSession;
     extensionsResult?: { errors: Array<{ path: string; error: string }> };
@@ -465,8 +470,13 @@ async function configureSessionModel(
     throw new Error("Pi SDK model controls are unavailable.");
   }
 
-  await session.setModel(model);
-  session.setThinkingLevel(selection.thinkingLevel);
+  // Pi's setModel appends a model_change even when the model already matches.
+  if (modelProvider(session.model) !== selection.provider || modelId(session.model) !== selection.modelId) {
+    await session.setModel(model);
+  }
+  if (session.thinkingLevel !== selection.thinkingLevel) {
+    session.setThinkingLevel(selection.thinkingLevel);
+  }
 
   const controls = modelControlsFromSession(session);
 
@@ -584,6 +594,28 @@ export function createPublicPiSdkRuntimeFactory(
       ...await options.sessionOptionsFor?.(input),
       cwd: input.cwd,
     };
+    if (input.modelSelection) {
+      const selection = input.modelSelection;
+      const agentDir = sessionOptions.agentDir;
+      // Resolve against the same catalog/auth runtime Pi will use, before it
+      // records the initial model and thinking entries in the new session.
+      const modelRuntime = sessionOptions.modelRuntime ?? await options.sdk.ModelRuntime?.create({
+        authPath: agentDir ? join(agentDir, "auth.json") : undefined,
+        modelsPath: agentDir ? join(agentDir, "models.json") : undefined,
+      });
+      const model = modelRuntime?.getModel?.(selection.provider, selection.modelId);
+      if (!model || !modelRuntime?.getAvailableSnapshot?.().some(
+        (available) => available.provider === selection.provider && available.id === selection.modelId,
+      )) {
+        throw new Error(`Model "${selection.provider}/${selection.modelId}" is unavailable.`);
+      }
+      if (!thinkingLevelsForModel(model).includes(selection.thinkingLevel)) {
+        throw new Error(`Thinking level "${selection.thinkingLevel}" is unavailable for "${selection.provider}/${selection.modelId}".`);
+      }
+      sessionOptions.modelRuntime = modelRuntime;
+      sessionOptions.model = model;
+      sessionOptions.thinkingLevel = selection.thinkingLevel;
+    }
     return createPublicPiSdkRuntime({
       input,
       now,

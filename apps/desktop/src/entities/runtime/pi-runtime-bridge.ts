@@ -162,6 +162,7 @@ export type StartRuntimeInput = {
   sessionId: string;
   projectId: string;
   checkout: ExecutionCheckout;
+  modelSelection?: RuntimeModelSelection;
 };
 
 export type CreatePiSessionStateInput = {
