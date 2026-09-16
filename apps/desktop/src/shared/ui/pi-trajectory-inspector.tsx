@@ -228,11 +228,10 @@ export function PiTrajectoryInspector({
               <div className="mt-3 border-t border-border pt-3">
                 {childSession ? (
                   <button
-                    className={`text-xs ${
-                      childSession.isAvailable
-                        ? "cursor-pointer text-foreground underline-offset-2 hover:underline"
-                        : "cursor-not-allowed text-muted"
-                    }`}
+                    // Primary action of the child-session area: a filled compact
+                    // button, matching "Send", so it reads as clickable rather than
+                    // as a label (a bare text link was missed by users).
+                    className="cursor-pointer rounded-md bg-primary px-2 py-1 text-xs text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     data-testid="open-child-session"
                     disabled={!childSession.isAvailable}
                     title={
@@ -243,7 +242,7 @@ export function PiTrajectoryInspector({
                     type="button"
                     onClick={childSession.isAvailable ? onOpenChildSession : undefined}
                   >
-                    Open child session
+                    Open child session →
                   </button>
                 ) : null}
                 {canSend || canStop ? (
