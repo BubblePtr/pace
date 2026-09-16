@@ -30,7 +30,8 @@ describe("Design components layer", () => {
 
     for (const name of [
       "PiKpi",
-      "PiBarChart",
+      "PiLineChart",
+      "PiHeatmap",
       "TerminalView",
       "BrowserSurface",
       "PiTrajectoryLedger",
@@ -62,7 +63,7 @@ describe("Design components layer", () => {
     }
   });
 
-  it("shows PiKpi in stacked, inline, delta and empty variants", () => {
+  it("shows PiKpi in stacked, inline, delta, empty and footer variants", () => {
     render(<DesignComponentsLayer />);
 
     const section = screen.getByRole("region", { name: "PiKpi" });
@@ -71,6 +72,19 @@ describe("Design components layer", () => {
     expect(within(section).getByText("layout=inline")).toBeInTheDocument();
     expect(within(section).getByText("with delta")).toBeInTheDocument();
     expect(within(section).getByText("no value")).toBeInTheDocument();
+    expect(within(section).getByText("with footer sparkline")).toBeInTheDocument();
+  });
+
+  it("shows the chart primitives with data, empty and tooltip states", () => {
+    render(<DesignComponentsLayer />);
+
+    const line = screen.getByRole("region", { name: "PiLineChart" });
+    expect(within(line).getByText("No usage in this range")).toBeInTheDocument();
+    expect(within(line).getByRole("img", { name: "Daily cost demo" })).toBeInTheDocument();
+
+    const heat = screen.getByRole("region", { name: "PiHeatmap" });
+    expect(heat.querySelectorAll('[data-slot="heatmap-cell"][data-level="5"]').length).toBeGreaterThan(0);
+    expect(within(heat).getByText("all empty")).toBeInTheDocument();
   });
 
   it("shows the Cockpit ledger: run headers, row states, focus dim, and empty variant", () => {

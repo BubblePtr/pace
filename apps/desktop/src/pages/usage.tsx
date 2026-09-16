@@ -2,23 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@astryxdesign/core/Card";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { IconButton } from "@astryxdesign/core/IconButton";
-import {
-  SegmentedControl,
-  SegmentedControlItem,
-} from "@astryxdesign/core/SegmentedControl";
-import { useMemo, useState } from "react";
-import { Cell, Pie, PieChart, Tooltip as RechartsTooltip } from "recharts";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { useMemo, useState, type ReactNode } from "react";
 import { AppFrame } from "@/app/app-shell";
 import { RefreshCw } from "@/shared/ui/icons";
-import {
-  PiBarChart,
-  type PiBarChartDatum,
-  type PiBarChartSeries,
-} from "@/shared/ui/pi-bar-chart";
+import { PiHeatmap } from "@/shared/ui/pi-heatmap";
 import { PiKpi } from "@/shared/ui/pi-kpi";
+import { PiLineChart, PiSparkline, type PiLinePoint } from "@/shared/ui/pi-line-chart";
 import { useRefreshOnWindowFocus } from "@/shared/refresh";
 import {
-  formatCost,
   formatDateLabel,
   formatTokens,
   listSessions,
@@ -26,623 +19,462 @@ import {
   type SessionSummary,
 } from "@/entities/session/sessions";
 import {
-  aggregateDailyTokens,
-  aggregateDailyTokensByProject,
-  aggregateModelDistribution,
+  aggregateDailyCost,
   aggregateSkillCounts,
   aggregateToolCounts,
-  bucketTokenUsageByProject,
-  buildTrailingAnnualTokenHeatmap,
-  type DailyTokensByProject,
-  type DailyTokenUsage,
-  type ModelDistribution,
-  type TokenUsageBucket,
-  type UsageTrendPreset,
+  aggregateWeekdayHourCost,
+  localClock,
+  rankLevels,
+  rankModelsByCost,
+  rankProjectsByCost,
+  splitUsagePeriod,
+  summarizeUsage,
+  usageDelta,
+  usagePeriods,
+  type DailyCost,
+  type LocalClock,
+  type UsageDelta,
+  type UsagePeriod,
+  type UsageRank,
 } from "@/entities/session/usage-aggregation";
 
-const chartColorCount = 5;
-const defaultRankLimit = 8;
-const usageCardContentClass = "p-5";
-const usageTrendBarSize = 14;
-const usageKpiValueClass = "tabular-nums text-[var(--pigui-data-blue)]";
-const usageChartColors = [
+// Cost is the page's primary axis. Categorical series colours are assigned
+// in this fixed order by rank and never cycled; a sixth entity folds into
+// "Other" (slate). Series colour is only ever a `--pigui-data-*` token.
+const seriesColors = [
   "var(--pigui-data-blue)",
   "var(--pigui-data-orange)",
+  "var(--pigui-data-green)",
   "var(--pigui-data-amber)",
   "var(--pigui-data-coral)",
-  "var(--pigui-data-slate)",
-];
-const usageTrendPresetOptions: Array<{
-  id: UsageTrendPreset;
-  label: string;
-  description: string;
-}> = [
-  { id: "30d", label: "30D", description: "Daily buckets · last 30 days" },
-  { id: "12w", label: "12W", description: "Weekly buckets · last 12 weeks" },
-  { id: "12m", label: "12M", description: "Monthly buckets · last 12 months" },
 ] as const;
+const otherColor = "var(--pigui-data-slate)";
+const trendColor = seriesColors[0];
+const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+const hours = Array.from({ length: 24 }, (_, hour) => ({
+  key: String(hour),
+  label: hour % 6 === 0 ? `${String(hour).padStart(2, "0")}:00` : undefined,
+}));
 
-function projectColor(project: string, projects: string[]) {
-  const index = Math.max(0, projects.indexOf(project));
-  return chartColor(index);
+function colorByRank(names: string[]) {
+  const map = new Map(names.map((name, index) => [name, seriesColors[index] ?? otherColor]));
+  return (name: string) => map.get(name) ?? otherColor;
 }
 
-function heatColor(level: number) {
-  return [
-    "var(--surface-secondary)",
-    "var(--pigui-data-peach)",
-    "var(--pigui-data-coral)",
-    "var(--pigui-data-orange)",
-    "var(--pigui-data-orange-strong)",
-  ][level];
-}
-
-function chartColor(index: number) {
-  return usageChartColors[index % chartColorCount];
-}
-
-function formatPercent(value: number) {
+function money(value: number, digits = 2) {
   return new Intl.NumberFormat(undefined, {
-    style: "percent",
-    maximumFractionDigits: 0,
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(value);
 }
 
-function isUsageTrendPreset(value: string): value is UsageTrendPreset {
-  return usageTrendPresetOptions.some((option) => option.id === value);
+/** Two decimals for headlines; sub-cent costs read as "<$0.01" instead of "$0.00". */
+function moneyAuto(value: number) {
+  return value > 0 && value < 0.01 ? `<${money(0.01)}` : money(value);
 }
 
-function summarizeSessions(sessions: SessionSummary[]) {
-  return sessions.reduce(
-    (summary, session) => ({
-      totalCostUsd: summary.totalCostUsd + session.totalCostUsd,
-      totalTokens: summary.totalTokens + session.totalTokens,
-      projects: summary.projects.add(session.project),
-    }),
-    { totalCostUsd: 0, totalTokens: 0, projects: new Set<string>() },
-  );
+function percent(value: number) {
+  return new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 0 }).format(value);
 }
 
-function EmptyUsageState({ children }: { children: string }) {
-  return <EmptyState className="px-4 py-4" isCompact title={children} />;
+function shortProject(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
-/**
- * Chart-adjacent rank bar with a per-item palette color. Astryx ProgressBar
- * only exposes semantic variants, so the track/fill pair is hand-rolled on
- * tokenized utilities instead.
- */
-function RankBar({ label, value, color }: { label: string; value: number; color: string }) {
+function deltaLabel(delta: UsageDelta | null, days: number | null) {
+  if (!delta || days === null) return null;
+  if (delta.kind === "new") return `no usage in previous ${days} days`;
+  if (delta.kind === "flat") return `no change vs previous ${days} days`;
+  return `${delta.ratio > 0 ? "+" : ""}${percent(delta.ratio)} vs previous ${days} days`;
+}
+
+function Swatch({ color }: { color: string }) {
   return (
-    <div
-      aria-label={label}
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={value}
-      className="h-1.5 w-full overflow-hidden rounded-full bg-surface-secondary"
-      role="progressbar"
-    >
-      <span
-        className="block h-full rounded-full"
-        style={{ backgroundColor: color, width: `${value}%` }}
-      />
-    </div>
+    <span
+      aria-hidden
+      className="inline-block size-2 shrink-0 rounded-full"
+      style={{ backgroundColor: color }}
+    />
   );
 }
 
-function NamedRankList({
+function UsageWidget({
   title,
   meta,
-  items,
-  emptyLabel,
+  actions,
+  children,
 }: {
   title: string;
   meta: string;
-  items: NamedCount[];
-  emptyLabel: string;
+  actions?: ReactNode;
+  children: ReactNode;
 }) {
-  const maxCount = Math.max(...items.map((item) => item.count), 0);
-
   return (
-    <Card padding={0}>
-      <div className={usageCardContentClass} data-testid="rank-card-content">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">{title}</h2>
-            <p className="mt-1 text-sm text-muted">{meta}</p>
+    <Card padding={4}>
+      <section aria-label={title} className="flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <Heading level={2}>{title}</Heading>
+            <Text color="secondary" display="block" type="supporting">
+              {meta}
+            </Text>
           </div>
-          <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-xs text-muted">
-            Top {Math.min(defaultRankLimit, items.length || defaultRankLimit)}
-          </span>
+          {actions}
         </div>
-        {items.length === 0 ? (
-          <EmptyUsageState>{emptyLabel}</EmptyUsageState>
-        ) : (
-          <div className="grid gap-3">
-            {items.map((item, index) => {
-              const width = maxCount === 0 ? 0 : Math.max(2, (item.count / maxCount) * 100);
-
-              return (
-                <div key={item.name}>
-                  <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
-                    <span className="min-w-0 truncate font-medium text-foreground">
-                      {item.name}
-                    </span>
-                    <span className="shrink-0 text-muted">{item.count}</span>
-                  </div>
-                  <RankBar
-                    color={chartColor(index)}
-                    label={`${item.name} count share`}
-                    value={width}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+        {children}
+      </section>
     </Card>
   );
 }
 
-export function UsageSecondLayer({
-  sessions,
-  rankLimit = defaultRankLimit,
+function UsageKpi({
+  label,
+  value,
+  delta,
+  spark,
 }: {
-  sessions: SessionSummary[];
-  rankLimit?: number;
+  label: string;
+  value: string;
+  delta: string | null;
+  spark: number[];
 }) {
-  const toolCounts = useMemo(() => aggregateToolCounts(sessions, rankLimit), [sessions, rankLimit]);
-  const skillCounts = useMemo(() => aggregateSkillCounts(sessions, rankLimit), [sessions, rankLimit]);
-
   return (
-    <section className="grid gap-4 xl:grid-cols-2">
-      <NamedRankList
-        emptyLabel="No tool calls yet."
-        items={toolCounts}
-        meta="Most-used tools across all sessions"
-        title="Tool calls"
-      />
-      <NamedRankList
-        emptyLabel="No skill usage yet."
-        items={skillCounts}
-        meta="Most-used skills across all sessions"
-        title="Skill usage"
-      />
-    </section>
+    <PiKpi
+      delta={delta}
+      footer={<PiSparkline color={trendColor} values={spark} />}
+      label={label}
+    >
+      {value}
+    </PiKpi>
   );
 }
 
-export function UsageSummaryPanel({
+function CostTrendTooltip({ day, colorFor }: { day: DailyCost; colorFor: (project: string) => string }) {
+  return (
+    <>
+      <Text as="p" color="primary" display="block" type="supporting" weight="medium">
+        {formatDateLabel(day.date)} · {day.sessions} {day.sessions === 1 ? "session" : "sessions"}
+      </Text>
+      <Text as="p" display="block" hasTabularNumbers type="body" weight="semibold">
+        {money(day.costUsd)}
+      </Text>
+      {day.projects.slice(0, 4).map((project) => (
+        <div key={project.project} className="flex items-center justify-between gap-4">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Swatch color={colorFor(project.project)} />
+            <Text maxLines={1} type="supporting">
+              {shortProject(project.project)}
+            </Text>
+          </span>
+          <Text hasTabularNumbers type="supporting">
+            {money(project.costUsd)}
+          </Text>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Edge-to-edge rank rows: name, proportional bar, value. Never card-wrapped. */
+function RankRows({
+  rows,
+  colorFor,
+  label = (row) => row.name,
+  meta,
+  emptyLabel,
+}: {
+  rows: UsageRank[];
+  colorFor: (name: string) => string;
+  label?: (row: UsageRank) => string;
+  meta: (row: UsageRank) => string;
+  emptyLabel: string;
+}) {
+  if (rows.length === 0) {
+    return <EmptyState isCompact title={emptyLabel} />;
+  }
+  const max = Math.max(...rows.map((row) => row.costUsd), 0);
+
+  return (
+    <ul className="m-0 flex list-none flex-col p-0">
+      {rows.map((row) => (
+        <li
+          key={row.name}
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 border-b border-separator py-2 last:border-b-0"
+          title={row.name}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <Swatch color={colorFor(row.name)} />
+            <Text maxLines={1} type="body" weight="medium">
+              {label(row)}
+            </Text>
+          </span>
+          <Text hasTabularNumbers justify="end" type="body" weight="semibold">
+            {moneyAuto(row.costUsd)}
+          </Text>
+          <span className="col-span-2 flex items-center gap-3">
+            <span className="h-1 flex-1 overflow-hidden rounded-full bg-surface-muted">
+              <span
+                className="block h-full rounded-full"
+                style={{ backgroundColor: colorFor(row.name), width: `${max === 0 ? 0 : (row.costUsd / max) * 100}%` }}
+              />
+            </span>
+            <Text hasTabularNumbers type="supporting">
+              {meta(row)}
+            </Text>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CountRows({ items, emptyLabel }: { items: NamedCount[]; emptyLabel: string }) {
+  if (items.length === 0) {
+    return <EmptyState isCompact title={emptyLabel} />;
+  }
+  const max = Math.max(...items.map((item) => item.count), 0);
+
+  return (
+    <ul className="m-0 flex list-none flex-col p-0">
+      {items.map((item) => (
+        <li
+          key={item.name}
+          className="grid grid-cols-[minmax(0,1fr)_6rem_3.5rem] items-center gap-3 border-b border-separator py-1.5 last:border-b-0"
+        >
+          <Text maxLines={1} type="body">
+            {item.name}
+          </Text>
+          <span aria-hidden className="h-1 overflow-hidden rounded-full bg-surface-muted">
+            <span
+              className="block h-full rounded-full"
+              style={{ backgroundColor: otherColor, width: `${max === 0 ? 0 : (item.count / max) * 100}%` }}
+            />
+          </span>
+          <Text hasTabularNumbers justify="end" type="body" weight="medium">
+            {item.count}
+          </Text>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function UsageDashboard({
   sessions,
-  isFetching,
+  clock = localClock,
+  isFetching = false,
   onRefresh,
 }: {
   sessions: SessionSummary[];
-  isFetching: boolean;
-  onRefresh: () => void;
+  /** Weekday/hour resolver for the rhythm grid; defaults to the local clock. */
+  clock?: LocalClock;
+  isFetching?: boolean;
+  onRefresh?: () => void;
 }) {
-  const summary = summarizeSessions(sessions);
-
-  return (
-    <section className="relative" data-testid="usage-summary">
-      <div
-        className="absolute right-3 top-3 z-10 inline-flex"
-        data-testid="usage-refresh-tooltip-trigger"
-      >
-        <IconButton
-          className="pigui-pressable"
-          icon={<RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />}
-          isDisabled={isFetching}
-          label="Refresh usage"
-          size="sm"
-          tooltip="Refresh usage data"
-          variant="secondary"
-          onClick={onRefresh}
-        />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <PiKpi
-          formatOptions={{
-            style: "currency",
-            currency: "USD",
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          }}
-          label="Total cost"
-          value={summary.totalCostUsd}
-          valueClassName={usageKpiValueClass}
-        />
-        <PiKpi
-          formatOptions={{ notation: "compact", maximumFractionDigits: 1 }}
-          label="Total tokens"
-          value={summary.totalTokens}
-          valueClassName={usageKpiValueClass}
-        />
-        <PiKpi label="Sessions" value={sessions.length} valueClassName={usageKpiValueClass} />
-        <PiKpi
-          label="Projects"
-          value={summary.projects.size}
-          valueClassName={usageKpiValueClass}
-        />
-      </div>
-    </section>
+  const [period, setPeriod] = useState<UsagePeriod>("30d");
+  const spec = usagePeriods.find((item) => item.id === period) ?? usagePeriods[1];
+  const { current, previous } = useMemo(() => splitUsagePeriod(sessions, period), [sessions, period]);
+  const summary = summarizeUsage(current.sessions);
+  const previousSummary = previous ? summarizeUsage(previous.sessions) : null;
+  const days = useMemo(() => aggregateDailyCost(current), [current]);
+  const projects = useMemo(() => rankProjectsByCost(current.sessions), [current]);
+  const models = useMemo(() => rankModelsByCost(current.sessions), [current]);
+  const tools = useMemo(() => aggregateToolCounts(current.sessions), [current]);
+  const skills = useMemo(() => aggregateSkillCounts(current.sessions), [current]);
+  const rhythm = useMemo(() => aggregateWeekdayHourCost(current.sessions, clock), [current, clock]);
+  const rhythmLevel = useMemo(() => rankLevels(rhythm.flat().map((cell) => cell.costUsd)), [rhythm]);
+  const projectColor = useMemo(() => colorByRank(projects.map((row) => row.name)), [projects]);
+  const modelColor = useMemo(() => colorByRank(models.map((row) => row.name)), [models]);
+  const trend = useMemo<PiLinePoint[]>(
+    () => days.map((day) => ({ key: day.date, label: formatDateLabel(day.date), value: day.costUsd })),
+    [days],
   );
-}
+  const dayByKey = useMemo(() => new Map(days.map((day) => [day.date, day])), [days]);
+  const averageCost = summary.sessions === 0 ? 0 : summary.costUsd / summary.sessions;
+  const previousAverage =
+    previousSummary === null ? null : previousSummary.sessions === 0 ? 0 : previousSummary.costUsd / previousSummary.sessions;
+  const scope = spec.days === null ? "all time" : "this period";
 
-function usageTrendLabel(bucket: TokenUsageBucket, preset: UsageTrendPreset) {
-  if (preset === "12m") {
-    return new Intl.DateTimeFormat(undefined, { month: "short" }).format(
-      new Date(`${bucket.startDate}T00:00:00.000Z`),
+  if (sessions.length === 0) {
+    return (
+      <EmptyState
+        className="px-4 py-12"
+        description="Usage appears here once a Pi session has run. Start one from Trajectory."
+        title="No sessions recorded yet"
+      />
     );
   }
-  return formatDateLabel(bucket.startDate);
-}
-
-function usageTrendTooltipLabel(bucket: TokenUsageBucket) {
-  if (bucket.startDate === bucket.endDate) {
-    return formatDateLabel(bucket.startDate);
-  }
-  return `${formatDateLabel(bucket.startDate)} – ${formatDateLabel(bucket.endDate)}`;
-}
-
-export function UsageTrendChart({
-  days,
-  projects,
-  preset,
-}: {
-  days: DailyTokensByProject[];
-  projects: string[];
-  preset: UsageTrendPreset;
-}) {
-  const buckets = useMemo(() => bucketTokenUsageByProject(days, preset), [days, preset]);
-  const series = useMemo<PiBarChartSeries[]>(
-    () =>
-      projects.map((project, index) => ({
-        color: projectColor(project, projects),
-        key: `project_${index}`,
-        label: project,
-      })),
-    [projects],
-  );
-  const data = useMemo<PiBarChartDatum[]>(
-    () =>
-      buckets.map((bucket) => {
-        const tokensByProject = new Map(
-          bucket.projects.map((project) => [project.project, project.tokens]),
-        );
-
-        return {
-          key: bucket.key,
-          label: usageTrendLabel(bucket, preset),
-          tooltipLabel: usageTrendTooltipLabel(bucket),
-          values: Object.fromEntries(
-            series.map((item) => [item.key, tokensByProject.get(item.label) ?? 0]),
-          ),
-        };
-      }),
-    [buckets, preset, series],
-  );
-  const tickInterval = preset === "30d" ? 4 : 0;
-
-  if (buckets.length === 0) {
-    return <EmptyUsageState>No sessions found.</EmptyUsageState>;
-  }
 
   return (
-    <div
-      className="overflow-visible"
-      data-bar-size={usageTrendBarSize}
-      data-bucket-count={data.length}
-      data-preset={preset}
-      data-testid="usage-trend-chart-viewport"
-    >
-      <PiBarChart
-        aria-label="Token usage trend by project chart"
-        barSize={usageTrendBarSize}
-        data={data}
-        height={200}
-        series={series}
-        tickInterval={tickInterval}
-        valueFormatter={(value) => `${formatTokens(value)} tokens`}
-      />
-    </div>
-  );
-}
-
-export function UsageTrendSection({
-  days,
-  projects,
-}: {
-  days: DailyTokensByProject[];
-  projects: string[];
-}) {
-  const [preset, setPreset] = useState<UsageTrendPreset>("30d");
-  const description =
-    usageTrendPresetOptions.find((option) => option.id === preset)?.description ??
-    usageTrendPresetOptions[0].description;
-
-  return (
-    <section className="min-w-0">
-      <Card className="h-full overflow-visible" padding={0}>
-        <div className={usageCardContentClass} data-testid="usage-trend-card-content">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Usage trend</h2>
-              <p className="mt-1 text-sm text-muted">{description}</p>
-            </div>
-            <SegmentedControl
-              label="Usage trend period"
-              size="sm"
-              value={preset}
-              onChange={(value) => {
-                setPreset(isUsageTrendPreset(value) ? value : "30d");
-              }}
-            >
-              {usageTrendPresetOptions.map((option) => (
-                <SegmentedControlItem key={option.id} label={option.label} value={option.id} />
-              ))}
-            </SegmentedControl>
-          </div>
-          <UsageTrendChart days={days} preset={preset} projects={projects} />
-          {projects.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted">
-              {projects.slice(0, chartColorCount).map((project, index) => (
-                <span key={project} className="inline-flex items-center gap-1.5">
-                  <span
-                    aria-hidden
-                    className="size-2 rounded-sm"
-                    style={{ backgroundColor: chartColor(index) }}
-                  />
-                  {project}
-                </span>
-              ))}
-            </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Text color="secondary" display="block" hasTabularNumbers type="body">
+          {current.start === current.end
+            ? formatDateLabel(current.start)
+            : `${formatDateLabel(current.start)} – ${formatDateLabel(current.end)}`}
+        </Text>
+        <div className="flex items-center gap-2">
+          <SegmentedControl
+            label="Usage period"
+            size="sm"
+            value={period}
+            onChange={(value) => setPeriod(usagePeriods.some((item) => item.id === value) ? (value as UsagePeriod) : "30d")}
+          >
+            {usagePeriods.map((item) => (
+              <SegmentedControlItem key={item.id} label={item.label} value={item.id} />
+            ))}
+          </SegmentedControl>
+          {onRefresh ? (
+            <span className="inline-flex" data-testid="usage-refresh-tooltip-trigger">
+              <IconButton
+                className="pigui-pressable"
+                icon={<RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />}
+                isDisabled={isFetching}
+                label="Refresh usage"
+                size="sm"
+                tooltip="Refresh usage data"
+                variant="ghost"
+                onClick={onRefresh}
+              />
+            </span>
           ) : null}
         </div>
-      </Card>
-    </section>
-  );
-}
-
-type ModelMixRow = ModelDistribution & { color: string };
-
-function modelMixRows(models: ModelDistribution[]): ModelMixRow[] {
-  const sorted = [...models].sort(
-    (left, right) => right.tokens - left.tokens || left.model.localeCompare(right.model),
-  );
-  const visible = sorted.length > 4 ? sorted.slice(0, 3) : sorted;
-  const hidden = sorted.length > 4 ? sorted.slice(3) : [];
-  const rows: ModelDistribution[] = [...visible];
-
-  if (hidden.length > 0) {
-    rows.push({
-      model: "Other",
-      costUsd: hidden.reduce((sum, model) => sum + model.costUsd, 0),
-      tokens: hidden.reduce((sum, model) => sum + model.tokens, 0),
-      costShare: hidden.reduce((sum, model) => sum + model.costShare, 0),
-      tokenShare: hidden.reduce((sum, model) => sum + model.tokenShare, 0),
-    });
-  }
-
-  return rows.map((model, index) => ({ ...model, color: chartColor(index) }));
-}
-
-export function ModelMixCard({ sessions }: { sessions: SessionSummary[] }) {
-  const models = useMemo(() => modelMixRows(aggregateModelDistribution(sessions)), [sessions]);
-  const totalTokens = models.reduce((sum, model) => sum + model.tokens, 0);
-
-  return (
-    <Card className="h-full" padding={0}>
-      <div className={usageCardContentClass} data-testid="model-mix-card-content">
-        <div>
-          <h2 className="text-base font-semibold text-foreground">Model mix</h2>
-          <p className="mt-1 text-sm text-muted">Share of total tokens</p>
-        </div>
-        {models.length === 0 ? (
-          <div className="mt-4">
-            <EmptyUsageState>No model distribution yet.</EmptyUsageState>
-          </div>
-        ) : (
-          <div className="mt-4 grid items-center gap-3 md:grid-cols-[10rem_minmax(0,1fr)]">
-            <div
-              aria-label="Model token distribution"
-              className="relative mx-auto size-40"
-              role="img"
-            >
-              <PieChart height={160} width={160}>
-                <Pie
-                  cx="50%"
-                  cy="50%"
-                  data={models}
-                  dataKey="tokens"
-                  innerRadius={48}
-                  isAnimationActive={false}
-                  nameKey="model"
-                  outerRadius={74}
-                  paddingAngle={2}
-                  stroke="var(--surface)"
-                  strokeWidth={3}
-                >
-                  {models.map((model) => (
-                    <Cell key={model.model} fill={model.color} />
-                  ))}
-                </Pie>
-                <RechartsTooltip
-                  formatter={(value) => [`${formatTokens(Number(value))} tokens`, "Usage"]}
-                />
-              </PieChart>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-lg font-semibold text-foreground">
-                  {formatTokens(totalTokens)}
-                </span>
-                <span className="text-xs text-muted">tokens</span>
-              </div>
-            </div>
-            <div className="grid gap-2.5">
-              {models.map((model) => (
-                <div key={model.model} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        aria-hidden
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: model.color }}
-                      />
-                      <span className="truncate text-sm font-medium text-foreground">
-                        {model.model}
-                      </span>
-                    </div>
-                    <p className="mt-1 pl-[1.125rem] text-xs text-muted">
-                      {formatTokens(model.tokens)} · {formatCost(model.costUsd)}
-                    </p>
-                  </div>
-                  <span className="text-sm font-semibold text-foreground">
-                    {formatPercent(model.tokenShare)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
-    </Card>
-  );
-}
 
-function heatLevel(tokens: number, maxTokens: number) {
-  if (tokens === 0 || maxTokens === 0) {
-    return 0;
-  }
-
-  return Math.min(4, Math.max(1, Math.ceil((tokens / maxTokens) * 4)));
-}
-
-export function TokenHeatmap({ days }: { days: DailyTokenUsage[] }) {
-  const heatmap = useMemo(() => buildTrailingAnnualTokenHeatmap(days), [days]);
-
-  if (!heatmap) {
-    return <EmptyUsageState>No token usage yet.</EmptyUsageState>;
-  }
-
-  const activeDays = heatmap.days.filter((day) => day.totalTokens > 0).length;
-  const peakDayTokens = Math.max(...heatmap.days.map((day) => day.totalTokens), 0);
-  const maxTokens = peakDayTokens;
-
-  return (
-    <Card className="overflow-visible" padding={0}>
-      <div className={usageCardContentClass} data-testid="token-heatmap-card-content">
-        <div className="mb-5">
-          <h2 className="text-base font-semibold text-foreground">Token activity</h2>
-          <p className="mt-1 text-sm text-muted">Daily total tokens over the last year</p>
-        </div>
-        <div
-          className="grid items-start gap-5 xl:grid-cols-[max-content_minmax(7rem,1fr)]"
-          data-testid="token-heatmap-layout"
-        >
-          <div className="pigui-scroll-fade-x min-w-0 max-w-full overflow-x-auto pb-1">
-            <div className="w-max" data-testid="token-heatmap-calendar">
-              <div className="grid gap-2">
-                <div
-                  aria-hidden
-                  className="grid gap-0.5 text-sm leading-none text-muted"
-                  style={{
-                    gridTemplateColumns: `repeat(${heatmap.weekCount}, 0.75rem)`,
-                  }}
-                >
-                  {heatmap.monthLabels.map((month, index) => {
-                    const nextMonth = heatmap.monthLabels[index + 1];
-
-                    return (
-                      <span
-                        key={month.label}
-                        className="text-left"
-                        data-month-label={month.label}
-                        style={{
-                          gridColumnEnd: nextMonth
-                            ? nextMonth.weekIndex + 1
-                            : heatmap.weekCount + 1,
-                          gridColumnStart: month.weekIndex + 1,
-                        }}
-                      >
-                        {month.label}
-                      </span>
-                    );
-                  })}
-                </div>
-                <div
-                  className="grid gap-0.5"
-                  data-day-count={heatmap.days.length}
-                  data-testid="token-heatmap-grid"
-                  data-year={heatmap.year}
-                  style={{
-                    gridTemplateColumns: `repeat(${heatmap.weekCount}, 0.75rem)`,
-                  }}
-                >
-                  {heatmap.days.map((day) => {
-                    const activityValue = day.totalTokens;
-                    const level = heatLevel(activityValue, maxTokens);
-
-                    return (
-                      <div
-                        key={day.date}
-                        aria-label={`${formatDateLabel(day.date)} tokens ${day.totalTokens}`}
-                        className="size-3 justify-self-center rounded-full"
-                        data-activity-value={activityValue}
-                        data-date={day.date}
-                        data-level={level}
-                        data-token-day
-                        data-tokens={day.totalTokens}
-                        style={{
-                          backgroundColor: heatColor(level),
-                          gridColumnStart: day.weekIndex + 1,
-                          gridRowStart: day.weekdayIndex + 1,
-                        }}
-                        title={`${formatDateLabel(day.date)}: ${formatTokens(day.totalTokens)} tokens`}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div
-            className="grid grid-cols-2 items-start gap-x-5 gap-y-4 border-t border-border pt-4 xl:grid-cols-1 xl:content-start xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0"
-            data-testid="token-heatmap-summary"
-          >
-            <div aria-label={`${activeDays} active days`}>
-              <div className="text-xs text-muted">Active days</div>
-              <div className="mt-1 tabular-nums text-xl font-semibold leading-none text-foreground">
-                {activeDays}
-              </div>
-            </div>
-            <div aria-label={`${formatTokens(peakDayTokens)} peak day`}>
-              <div className="text-xs text-muted">Peak day</div>
-              <div className="mt-1 tabular-nums text-xl font-semibold leading-none text-foreground">
-                {formatTokens(peakDayTokens)}
-              </div>
-            </div>
-            <div className="col-span-2 grid gap-1.5 text-xs text-muted xl:col-span-1">
-              <div className="flex items-center justify-between">
-                <span>Less</span>
-                <span>More</span>
-              </div>
-              <div className="grid grid-cols-5 gap-1">
-                {[0, 1, 2, 3, 4].map((level) => (
-                  <span
-                    key={level}
-                    aria-hidden
-                    className="size-3 rounded-full"
-                    style={{ backgroundColor: heatColor(level) }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <UsageKpi
+          delta={deltaLabel(usageDelta(summary.costUsd, previousSummary?.costUsd ?? null), spec.days)}
+          label="Cost"
+          spark={days.map((day) => day.costUsd)}
+          value={money(summary.costUsd)}
+        />
+        <UsageKpi
+          delta={deltaLabel(usageDelta(summary.tokens, previousSummary?.tokens ?? null), spec.days)}
+          label="Tokens"
+          spark={days.map((day) => day.tokens)}
+          value={formatTokens(summary.tokens)}
+        />
+        <UsageKpi
+          delta={deltaLabel(usageDelta(summary.sessions, previousSummary?.sessions ?? null), spec.days)}
+          label="Sessions"
+          spark={days.map((day) => day.sessions)}
+          value={String(summary.sessions)}
+        />
+        <UsageKpi
+          delta={deltaLabel(usageDelta(averageCost, previousAverage), spec.days)}
+          label="Avg cost / session"
+          spark={days.map((day) => (day.sessions === 0 ? 0 : day.costUsd / day.sessions))}
+          value={moneyAuto(averageCost)}
+        />
       </div>
-    </Card>
+
+      <UsageWidget meta="Daily spend; hover for the project split" title="Cost over time">
+        <PiLineChart
+          aria-label="Daily cost"
+          color={trendColor}
+          emptyLabel="No sessions in this period"
+          points={trend}
+          renderTooltip={(point) => {
+            const day = dayByKey.get(point.key);
+            return day ? <CostTrendTooltip colorFor={projectColor} day={day} /> : null;
+          }}
+          valueFormatter={(value) => money(value, value >= 10 ? 0 : 1)}
+        />
+        {projects.length > 0 ? (
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {projects.slice(0, seriesColors.length).map((project) => (
+              <span key={project.name} className="inline-flex items-center gap-1.5" title={project.name}>
+                <Swatch color={projectColor(project.name)} />
+                <Text type="supporting">{shortProject(project.name)}</Text>
+              </span>
+            ))}
+            {projects.length > seriesColors.length ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Swatch color={otherColor} />
+                <Text type="supporting">Other ({projects.length - seriesColors.length})</Text>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </UsageWidget>
+
+      <UsageWidget
+        actions={
+          <div className="flex items-center gap-2">
+            <Text color="secondary" type="supporting">
+              Less
+            </Text>
+            {[0, 1, 2, 3, 4, 5].map((level) => (
+              <span key={level} aria-hidden className="pi-heatmap__cell inline-block w-3" data-level={level} />
+            ))}
+            <Text color="secondary" type="supporting">
+              More
+            </Text>
+          </div>
+        }
+        meta={`Cost by weekday and hour, local time, ${scope}`}
+        title="Rhythm"
+      >
+        <PiHeatmap
+          aria-label="Cost by weekday and hour"
+          cellLabel={(row, column, value) =>
+            `${row.label} ${String(column.key).padStart(2, "0")}:00: ${
+              value === 0 ? "no sessions" : `${money(value)}, ${rhythm[row.index][Number(column.key)].sessions} sessions`
+            }`
+          }
+          columns={hours}
+          levelOf={rhythmLevel}
+          renderTooltip={(row, column, value) => {
+            const hour = Number(column.key);
+            const cell = rhythm[row.index][hour];
+            return (
+              <>
+                <Text as="p" color="primary" display="block" type="supporting" weight="medium">
+                  {row.label} · {String(hour).padStart(2, "0")}:00–{String((hour + 1) % 24).padStart(2, "0")}:00
+                </Text>
+                <Text as="p" display="block" hasTabularNumbers type="supporting">
+                  {cell.sessions === 0 ? "No sessions" : `${money(value)} · ${cell.sessions} ${cell.sessions === 1 ? "session" : "sessions"}`}
+                </Text>
+              </>
+            );
+          }}
+          rows={weekdays.map((label, index) => ({ key: label.toLowerCase(), label, index }))}
+          values={rhythm.map((row) => row.map((cell) => cell.costUsd))}
+        />
+      </UsageWidget>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <UsageWidget meta={`Share of cost, ${scope}`} title="By project">
+          <RankRows
+            colorFor={projectColor}
+            emptyLabel="No sessions in this period."
+            label={(row) => shortProject(row.name)}
+            meta={(row) => `${percent(row.share)} · ${row.sessions} ${row.sessions === 1 ? "session" : "sessions"}`}
+            rows={projects}
+          />
+        </UsageWidget>
+        <UsageWidget meta={`Cost and tokens per model, ${scope}`} title="By model">
+          <RankRows
+            colorFor={modelColor}
+            emptyLabel="No model usage in this period."
+            meta={(row) => `${percent(row.share)} · ${formatTokens(row.tokens)} tokens`}
+            rows={models}
+          />
+        </UsageWidget>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <UsageWidget meta={`Calls across sessions, ${scope}`} title="Tools">
+          <CountRows emptyLabel="No tool calls in this period." items={tools} />
+        </UsageWidget>
+        <UsageWidget meta={`Invocations across sessions, ${scope}`} title="Skills">
+          <CountRows emptyLabel="No skill usage in this period." items={skills} />
+        </UsageWidget>
+      </div>
+    </div>
   );
 }
 
@@ -651,49 +483,23 @@ export function UsagePage() {
     queryKey: ["sessions"],
     queryFn: listSessions,
   });
-  const allSessions = sessions.data ?? [];
-  const tokenDays = useMemo(() => aggregateDailyTokens(allSessions), [allSessions]);
-  const tokenProjectDays = useMemo(
-    () => aggregateDailyTokensByProject(allSessions),
-    [allSessions],
-  );
-  const projects = useMemo(
-    () => Array.from(new Set(allSessions.map((session) => session.project))).sort(),
-    [allSessions],
-  );
 
   useRefreshOnWindowFocus(sessions.refetch);
 
   return (
     <AppFrame>
       <article className="min-h-full px-6 py-6">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+        <div className="mx-auto w-full max-w-6xl">
           {sessions.isError ? (
-            <EmptyState
-              className="px-4 py-12"
-              title="Could not read the Pi agent directory."
-            />
+            <EmptyState className="px-4 py-12" title="Could not read the Pi agent directory." />
           ) : sessions.isLoading ? (
             <EmptyState className="px-4 py-12" title="Loading usage..." />
           ) : (
-            <>
-              <UsageSummaryPanel
-                sessions={allSessions}
-                isFetching={sessions.isFetching}
-                onRefresh={() => sessions.refetch()}
-              />
-
-              <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(24rem,0.9fr)]">
-                <UsageTrendSection days={tokenProjectDays} projects={projects} />
-                <ModelMixCard sessions={allSessions} />
-              </div>
-
-              <section>
-                <TokenHeatmap days={tokenDays} />
-              </section>
-
-              <UsageSecondLayer sessions={allSessions} />
-            </>
+            <UsageDashboard
+              isFetching={sessions.isFetching}
+              sessions={sessions.data ?? []}
+              onRefresh={() => sessions.refetch()}
+            />
           )}
         </div>
       </article>

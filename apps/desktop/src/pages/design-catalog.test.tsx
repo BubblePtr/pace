@@ -46,10 +46,10 @@ describe("Component catalog navigation", () => {
     await user.click(within(screen.getByRole("navigation", { name: "Component catalog" })).getByRole("button", { name: "PiKpi" }));
     const variant = screen.getByRole("group", { name: "layout=stacked" });
     expect(variant.firstElementChild).toHaveTextContent("layout=stacked");
-    const target = within(screen.getByRole("navigation", { name: "Component catalog" })).getByRole("button", { name: "PiBarChart" });
+    const target = within(screen.getByRole("navigation", { name: "Component catalog" })).getByRole("button", { name: "PiLineChart" });
     target.focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("region", { name: "PiBarChart" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "PiLineChart" })).toBeInTheDocument();
     expect(target).toHaveAttribute("aria-current", "page");
   });
 });

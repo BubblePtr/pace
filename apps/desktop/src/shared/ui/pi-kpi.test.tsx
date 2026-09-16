@@ -59,3 +59,14 @@ describe("PiKpi", () => {
     expect(screen.getByText("+12%")).toHaveAttribute("data-slot", "kpi-delta");
   });
 });
+
+describe("PiKpi footer", () => {
+  it("renders an optional footer slot below the value row", () => {
+    const { container, rerender } = render(<PiKpi footer={<span>spark</span>} label="Cost" value={1} />);
+
+    expect(container.querySelector('[data-slot="kpi-footer"]')).toHaveTextContent("spark");
+
+    rerender(<PiKpi label="Cost" value={1} />);
+    expect(container.querySelector('[data-slot="kpi-footer"]')).toBeNull();
+  });
+});

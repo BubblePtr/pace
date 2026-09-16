@@ -1,477 +1,217 @@
 import { describe, expect, it } from "vitest";
+import type { SessionSummary } from "@/entities/session/sessions";
 import {
-  aggregateCostByModel,
-  aggregateDailyCostByProject,
-  aggregateDailyTokens,
-  aggregateDailyTokensByProject,
-  buildAnnualTokenHeatmap,
-  buildTrailingAnnualTokenHeatmap,
-  bucketCostByProject,
-  bucketTokenUsageByProject,
-  aggregateModelDistribution,
+  aggregateDailyCost,
   aggregateSkillCounts,
   aggregateToolCounts,
+  aggregateWeekdayHourCost,
+  rankLevels,
+  rankModelsByCost,
+  rankProjectsByCost,
+  splitUsagePeriod,
+  summarizeUsage,
+  usageDelta,
 } from "@/entities/session/usage-aggregation";
-import type { SessionSummary } from "@/entities/session/sessions";
 
-function session(
-  id: string,
-  timestamp: string,
-  project: string,
-  totalCostUsd: number,
-  totalTokens: number,
-  options: Partial<Pick<SessionSummary, "modelBreakdown" | "toolCounts" | "skillCounts">> = {},
-): SessionSummary {
+function session(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {
-    id,
-    timestamp,
-    project,
-    totalCostUsd,
-    totalTokens,
-    title: { kind: "raw", text: id },
-    modelBreakdown: options.modelBreakdown ?? [],
-    toolCounts: options.toolCounts ?? [],
-    skillCounts: options.skillCounts ?? [],
+    id: "s",
+    timestamp: "2026-06-26T10:00:00.000Z",
+    project: "alpha",
+    title: { kind: "raw", text: "s" },
+    totalCostUsd: 1,
+    totalTokens: 1000,
+    primaryModel: "m",
+    modelBreakdown: [{ model: "m", costUsd: 1, tokens: 1000 }],
+    toolCounts: [],
+    skillCounts: [],
     presence: "external",
+    ...overrides,
   };
 }
 
-describe("aggregateDailyCostByProject", () => {
-  it("returns an empty range for no sessions", () => {
-    expect(aggregateDailyCostByProject([])).toEqual([]);
-  });
-
-  it("groups cost by UTC day and project, filling sparse days", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.5, 200),
-      session("c", "2026-01-03T12:00:00.000Z", "alpha", 0.75, 300),
-    ];
-
-    expect(aggregateDailyCostByProject(sessions)).toEqual([
-      {
-        date: "2026-01-01",
-        totalCostUsd: 0.25,
-        projects: [{ project: "alpha", costUsd: 0.25 }],
-      },
-      {
-        date: "2026-01-02",
-        totalCostUsd: 0,
-        projects: [],
-      },
-      {
-        date: "2026-01-03",
-        totalCostUsd: 1.25,
-        projects: [
-          { project: "alpha", costUsd: 0.75 },
-          { project: "beta", costUsd: 0.5 },
-        ],
-      },
-    ]);
-  });
-});
-
-describe("aggregateDailyTokens", () => {
-  it("returns an empty range for no sessions", () => {
-    expect(aggregateDailyTokens([])).toEqual([]);
-  });
-
-  it("groups tokens by UTC day, filling sparse days", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.5, 200),
-      session("c", "2026-01-03T12:00:00.000Z", "alpha", 0.75, 300),
-    ];
-
-    expect(aggregateDailyTokens(sessions)).toEqual([
-      { date: "2026-01-01", totalTokens: 100 },
-      { date: "2026-01-02", totalTokens: 0 },
-      { date: "2026-01-03", totalTokens: 500 },
-    ]);
-  });
-});
-
-describe("aggregateDailyTokensByProject", () => {
-  it("groups tokens by UTC day and project, filling sparse days", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.5, 200),
-      session("c", "2026-01-03T12:00:00.000Z", "alpha", 0.75, 300),
-    ];
-
-    expect(aggregateDailyTokensByProject(sessions)).toEqual([
-      {
-        date: "2026-01-01",
-        totalTokens: 100,
-        projects: [{ project: "alpha", tokens: 100 }],
-      },
-      {
-        date: "2026-01-02",
-        totalTokens: 0,
-        projects: [],
-      },
-      {
-        date: "2026-01-03",
-        totalTokens: 500,
-        projects: [
-          { project: "alpha", tokens: 300 },
-          { project: "beta", tokens: 200 },
-        ],
-      },
-    ]);
-  });
-});
-
-describe("bucketTokenUsageByProject", () => {
-  const days = [
-    {
-      date: "2026-03-20",
-      totalTokens: 100,
-      projects: [{ project: "alpha", tokens: 100 }],
-    },
-    {
-      date: "2026-03-21",
-      totalTokens: 0,
-      projects: [],
-    },
-    {
-      date: "2026-03-22",
-      totalTokens: 500,
-      projects: [
-        { project: "alpha", tokens: 300 },
-        { project: "beta", tokens: 200 },
-      ],
-    },
+describe("splitUsagePeriod", () => {
+  const sessions = [
+    session({ id: "old", timestamp: "2026-05-20T10:00:00.000Z", totalCostUsd: 5 }),
+    session({ id: "prev", timestamp: "2026-06-18T10:00:00.000Z", totalCostUsd: 2 }),
+    session({ id: "edge", timestamp: "2026-06-20T00:30:00.000Z", totalCostUsd: 3 }),
+    session({ id: "latest", timestamp: "2026-06-26T23:00:00.000Z", totalCostUsd: 1 }),
   ];
 
-  it("keeps the 30-day trend at exactly 30 daily buckets", () => {
-    const buckets = bucketTokenUsageByProject(days, "30d");
+  it("anchors the window on the latest UTC day and includes the boundary day", () => {
+    const { current, previous } = splitUsagePeriod(sessions, "7d");
 
-    expect(buckets).toHaveLength(30);
-    expect(buckets[0]).toMatchObject({
-      key: "2026-02-21",
-      startDate: "2026-02-21",
-      endDate: "2026-02-21",
-      totalTokens: 0,
-    });
-    expect(buckets[buckets.length - 1]).toEqual({
-      key: "2026-03-22",
-      startDate: "2026-03-22",
-      endDate: "2026-03-22",
-      totalTokens: 500,
-      projects: [
-        { project: "alpha", tokens: 300 },
-        { project: "beta", tokens: 200 },
+    expect(current.start).toBe("2026-06-20");
+    expect(current.end).toBe("2026-06-26");
+    expect(current.sessions.map((s) => s.id)).toEqual(["edge", "latest"]);
+    expect(previous?.start).toBe("2026-06-13");
+    expect(previous?.end).toBe("2026-06-19");
+    expect(previous?.sessions.map((s) => s.id)).toEqual(["prev"]);
+  });
+
+  it("uses the whole history with no previous window for `all`", () => {
+    const { current, previous } = splitUsagePeriod(sessions, "all");
+
+    expect(current.start).toBe("2026-05-20");
+    expect(current.sessions).toHaveLength(4);
+    expect(previous).toBeNull();
+  });
+
+  it("returns an empty window for no sessions", () => {
+    const { current, previous } = splitUsagePeriod([], "30d");
+
+    expect(current.sessions).toEqual([]);
+    expect(previous?.sessions).toEqual([]);
+  });
+});
+
+describe("summarizeUsage", () => {
+  it("totals cost, tokens, sessions and distinct projects", () => {
+    expect(
+      summarizeUsage([
+        session({ totalCostUsd: 1.5, totalTokens: 10 }),
+        session({ totalCostUsd: 0.5, totalTokens: 5, project: "beta" }),
+        session({ totalCostUsd: 0, totalTokens: 0, project: "beta" }),
+      ]),
+    ).toEqual({ costUsd: 2, tokens: 15, sessions: 3, projects: 2 });
+  });
+});
+
+describe("usageDelta", () => {
+  it("reports a signed ratio against the previous value", () => {
+    expect(usageDelta(150, 100)).toEqual({ ratio: 0.5, kind: "up" });
+    expect(usageDelta(50, 100)).toEqual({ ratio: -0.5, kind: "down" });
+    expect(usageDelta(100.1, 100)).toEqual({ ratio: expect.closeTo(0.001, 5), kind: "flat" });
+  });
+
+  it("distinguishes 'no previous data' from 'no change'", () => {
+    expect(usageDelta(10, 0)).toEqual({ ratio: null, kind: "new" });
+    expect(usageDelta(0, 0)).toEqual({ ratio: 0, kind: "flat" });
+    expect(usageDelta(10, null)).toBeNull();
+  });
+});
+
+describe("aggregateDailyCost", () => {
+  it("fills every day of the window and splits cost by project", () => {
+    const days = aggregateDailyCost({
+      start: "2026-06-25",
+      end: "2026-06-27",
+      sessions: [
+        session({ timestamp: "2026-06-25T01:00:00.000Z", totalCostUsd: 1, project: "alpha" }),
+        session({ timestamp: "2026-06-25T02:00:00.000Z", totalCostUsd: 3, project: "beta" }),
+        session({ timestamp: "2026-06-27T02:00:00.000Z", totalCostUsd: 0.25, project: "alpha", totalTokens: 7 }),
+        session({ timestamp: "2026-06-30T02:00:00.000Z", totalCostUsd: 99 }),
       ],
     });
-  });
 
-  it("keeps weekly and monthly trends at 12 aggregated buckets", () => {
-    const weeks = bucketTokenUsageByProject(days, "12w");
-    const months = bucketTokenUsageByProject(days, "12m");
-
-    expect(weeks).toHaveLength(12);
-    expect(weeks[0]).toMatchObject({
-      startDate: "2025-12-29",
-      endDate: "2026-01-04",
-    });
-    expect(weeks[weeks.length - 1]).toEqual({
-      key: "2026-03-16",
-      startDate: "2026-03-16",
-      endDate: "2026-03-22",
-      totalTokens: 600,
+    expect(days.map((d) => d.date)).toEqual(["2026-06-25", "2026-06-26", "2026-06-27"]);
+    expect(days[0]).toMatchObject({
+      costUsd: 4,
+      sessions: 2,
       projects: [
-        { project: "alpha", tokens: 400 },
-        { project: "beta", tokens: 200 },
+        { project: "beta", costUsd: 3 },
+        { project: "alpha", costUsd: 1 },
       ],
     });
-
-    expect(months).toHaveLength(12);
-    expect(months[0]).toMatchObject({
-      key: "2025-04",
-      startDate: "2025-04-01",
-      endDate: "2025-04-30",
-    });
-    expect(months[months.length - 1]).toEqual({
-      key: "2026-03",
-      startDate: "2026-03-01",
-      endDate: "2026-03-22",
-      totalTokens: 600,
-      projects: [
-        { project: "alpha", tokens: 400 },
-        { project: "beta", tokens: 200 },
-      ],
-    });
+    expect(days[1]).toMatchObject({ costUsd: 0, tokens: 0, sessions: 0, projects: [] });
+    expect(days[2]).toMatchObject({ costUsd: 0.25, tokens: 7, sessions: 1 });
   });
 });
 
-describe("buildAnnualTokenHeatmap", () => {
-  it("expands sparse token days to a full calendar year", () => {
-    const heatmap = buildAnnualTokenHeatmap([
-      { date: "2026-03-20", totalTokens: 100 },
-      { date: "2026-06-24", totalTokens: 250 },
+describe("rankProjectsByCost / rankModelsByCost", () => {
+  it("ranks projects by cost with share of total", () => {
+    const ranks = rankProjectsByCost([
+      session({ project: "alpha", totalCostUsd: 3, totalTokens: 30 }),
+      session({ project: "beta", totalCostUsd: 1, totalTokens: 10 }),
+      session({ project: "alpha", totalCostUsd: 1, totalTokens: 10 }),
     ]);
 
-    expect(heatmap).toMatchObject({
-      year: 2026,
-      weekCount: 53,
-    });
-    expect(heatmap?.days).toHaveLength(365);
-    expect(heatmap?.days[0]).toMatchObject({
-      date: "2026-01-01",
-      totalTokens: 0,
-      weekdayIndex: 4,
-      weekIndex: 0,
-    });
-    expect(heatmap?.days.find((day) => day.date === "2026-03-20")).toMatchObject({
-      totalTokens: 100,
-    });
-    expect(heatmap?.days[heatmap.days.length - 1]).toMatchObject({
-      date: "2026-12-31",
-      totalTokens: 0,
-    });
-    expect(heatmap?.monthLabels.map((month) => month.label)).toEqual([
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
+    expect(ranks).toEqual([
+      { name: "alpha", costUsd: 4, tokens: 40, sessions: 2, share: 0.8 },
+      { name: "beta", costUsd: 1, tokens: 10, sessions: 1, share: 0.2 },
     ]);
   });
 
-  it("uses the latest data year when more than one year is present", () => {
-    const heatmap = buildAnnualTokenHeatmap([
-      { date: "2025-12-31", totalTokens: 100 },
-      { date: "2026-01-02", totalTokens: 200 },
-    ]);
-
-    expect(heatmap?.year).toBe(2026);
-    expect(heatmap?.days.find((day) => day.date === "2026-01-02")).toMatchObject({
-      totalTokens: 200,
-    });
-    expect(heatmap?.days.some((day) => day.date === "2025-12-31")).toBe(false);
-  });
-});
-
-describe("buildTrailingAnnualTokenHeatmap", () => {
-  it("expands sparse token days to the latest twelve calendar months", () => {
-    const heatmap = buildTrailingAnnualTokenHeatmap([
-      { date: "2026-03-20", totalTokens: 100 },
-      { date: "2026-06-24", totalTokens: 250 },
-    ]);
-
-    expect(heatmap).toMatchObject({
-      year: 2026,
-      startDate: "2025-07-01",
-      endDate: "2026-06-30",
-    });
-    expect(heatmap?.days[0]).toMatchObject({
-      date: "2025-07-01",
-      totalTokens: 0,
-    });
-    expect(heatmap?.days.find((day) => day.date === "2026-03-20")).toMatchObject({
-      totalTokens: 100,
-    });
-    expect(heatmap?.days[heatmap.days.length - 1]).toMatchObject({
-      date: "2026-06-30",
-      totalTokens: 0,
-    });
-    expect(heatmap?.monthLabels.map((month) => month.label)).toEqual([
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-    ]);
-  });
-});
-
-describe("bucketCostByProject", () => {
-  const days = [
-    {
-      date: "2026-03-20",
-      totalCostUsd: 1,
-      projects: [{ project: "alpha", costUsd: 1 }],
-    },
-    {
-      date: "2026-03-21",
-      totalCostUsd: 0,
-      projects: [],
-    },
-    {
-      date: "2026-03-22",
-      totalCostUsd: 2,
-      projects: [{ project: "beta", costUsd: 2 }],
-    },
-    {
-      date: "2026-04-01",
-      totalCostUsd: 3,
-      projects: [{ project: "alpha", costUsd: 3 }],
-    },
-  ];
-
-  it("groups daily project costs by month without keeping daily ticks", () => {
-    expect(bucketCostByProject(days, "month")).toEqual([
-      {
-        key: "2026-03",
-        startDate: "2026-03-20",
-        endDate: "2026-03-22",
-        totalCostUsd: 3,
-        projects: [
-          { project: "beta", costUsd: 2 },
-          { project: "alpha", costUsd: 1 },
-        ],
-      },
-      {
-        key: "2026-04",
-        startDate: "2026-04-01",
-        endDate: "2026-04-01",
-        totalCostUsd: 3,
-        projects: [{ project: "alpha", costUsd: 3 }],
-      },
-    ]);
-  });
-
-  it("groups daily project costs by UTC week and cumulative total", () => {
-    expect(bucketCostByProject(days, "week").map((bucket) => bucket.key)).toEqual([
-      "2026-03-16",
-      "2026-03-30",
-    ]);
-    expect(bucketCostByProject(days, "cumulative")).toEqual([
-      {
-        key: "cumulative",
-        startDate: "2026-03-20",
-        endDate: "2026-04-01",
-        totalCostUsd: 6,
-        projects: [
-          { project: "alpha", costUsd: 4 },
-          { project: "beta", costUsd: 2 },
-        ],
-      },
-    ]);
-  });
-});
-
-describe("aggregateCostByModel", () => {
-  it("groups model cost and tokens across sessions", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100, {
+  it("ranks models from the per-session breakdown, not the primary model", () => {
+    const ranks = rankModelsByCost([
+      session({
         modelBreakdown: [
-          { model: "gpt-5-codex", costUsd: 0.2, tokens: 80 },
-          { model: "gpt-5-mini", costUsd: 0.05, tokens: 20 },
+          { model: "big", costUsd: 3, tokens: 300 },
+          { model: "small", costUsd: 1, tokens: 700 },
         ],
       }),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.5, 200, {
-        modelBreakdown: [{ model: "gpt-5-mini", costUsd: 0.5, tokens: 200 }],
-      }),
-    ];
-
-    expect(aggregateCostByModel(sessions)).toEqual([
-      { model: "gpt-5-mini", costUsd: 0.55, tokens: 220 },
-      { model: "gpt-5-codex", costUsd: 0.2, tokens: 80 },
+      session({ modelBreakdown: [{ model: "small", costUsd: 1, tokens: 100 }] }),
     ]);
+
+    expect(ranks).toEqual([
+      { name: "big", costUsd: 3, tokens: 300, sessions: 1, share: 0.6 },
+      { name: "small", costUsd: 2, tokens: 800, sessions: 2, share: 0.4 },
+    ]);
+  });
+
+  it("returns zero shares when total cost is zero", () => {
+    expect(rankProjectsByCost([session({ totalCostUsd: 0 })])[0].share).toBe(0);
   });
 });
 
-describe("aggregateModelDistribution", () => {
-  it("returns cost and token shares for each model", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100, {
-        modelBreakdown: [
-          { model: "gpt-5-codex", costUsd: 0.2, tokens: 80 },
-          { model: "gpt-5-mini", costUsd: 0.05, tokens: 20 },
-        ],
-      }),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.75, 300, {
-        modelBreakdown: [{ model: "gpt-5-mini", costUsd: 0.75, tokens: 300 }],
-      }),
-    ];
+describe("aggregateWeekdayHourCost", () => {
+  it("buckets by weekday (Monday first) and hour using the supplied clock", () => {
+    const grid = aggregateWeekdayHourCost(
+      [
+        // 2026-06-26 is a Friday.
+        session({ timestamp: "2026-06-26T09:10:00.000Z", totalCostUsd: 1 }),
+        session({ timestamp: "2026-06-26T09:50:00.000Z", totalCostUsd: 2 }),
+        // 2026-06-28 is a Sunday.
+        session({ timestamp: "2026-06-28T23:59:00.000Z", totalCostUsd: 4 }),
+      ],
+      (timestamp) => {
+        const date = new Date(timestamp);
+        return { weekday: date.getUTCDay(), hour: date.getUTCHours() };
+      },
+    );
 
-    expect(aggregateModelDistribution(sessions)).toEqual([
-      {
-        model: "gpt-5-mini",
-        costUsd: 0.8,
-        tokens: 320,
-        costShare: 0.8,
-        tokenShare: 0.8,
-      },
-      {
-        model: "gpt-5-codex",
-        costUsd: 0.2,
-        tokens: 80,
-        costShare: 0.2,
-        tokenShare: 0.2,
-      },
-    ]);
+    expect(grid).toHaveLength(7);
+    expect(grid.every((row) => row.length === 24)).toBe(true);
+    expect(grid[4][9]).toEqual({ costUsd: 3, sessions: 2 });
+    expect(grid[6][23]).toEqual({ costUsd: 4, sessions: 1 });
+    expect(grid[0][0]).toEqual({ costUsd: 0, sessions: 0 });
   });
 });
 
-describe("aggregateToolCounts", () => {
-  it("groups tool counts across sessions and returns the top results", () => {
+describe("rankLevels", () => {
+  it("assigns levels by rank so one outlier does not flatten the rest", () => {
+    const level = rankLevels([1, 2, 3, 4, 1000], 5);
+
+    expect(level(0)).toBe(0);
+    expect(level(1)).toBe(1);
+    expect(level(4)).toBe(4);
+    expect(level(1000)).toBe(5);
+  });
+
+  it("gives tied maxima the top level", () => {
+    const level = rankLevels([3, 3, 1], 5);
+
+    expect(level(3)).toBe(5);
+    expect(level(1)).toBe(1);
+  });
+
+  it("handles an all-zero input", () => {
+    expect(rankLevels([0, 0], 5)(0)).toBe(0);
+  });
+});
+
+describe("aggregateToolCounts / aggregateSkillCounts", () => {
+  it("sums counts across sessions and returns the top results", () => {
     const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100, {
-        toolCounts: [
-          { name: "read_file", count: 2 },
-          { name: "list_files", count: 1 },
-        ],
-      }),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.75, 300, {
-        toolCounts: [
-          { name: "read_file", count: 3 },
-          { name: "run_command", count: 4 },
-        ],
-      }),
+      session({ toolCounts: [{ name: "Read", count: 3 }, { name: "Edit", count: 1 }], skillCounts: [{ name: "tdd", count: 1 }] }),
+      session({ toolCounts: [{ name: "Read", count: 2 }, { name: "Bash", count: 4 }], skillCounts: [] }),
     ];
 
     expect(aggregateToolCounts(sessions, 2)).toEqual([
-      { name: "read_file", count: 5 },
-      { name: "run_command", count: 4 },
+      { name: "Read", count: 5 },
+      { name: "Bash", count: 4 },
     ]);
-  });
-});
-
-describe("aggregateSkillCounts", () => {
-  it("groups skill counts across sessions and returns the top results", () => {
-    const sessions = [
-      session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100, {
-        skillCounts: [
-          { name: "kami", count: 2 },
-          { name: "review", count: 1 },
-        ],
-      }),
-      session("b", "2026-01-03T01:00:00.000Z", "beta", 0.75, 300, {
-        skillCounts: [
-          { name: "review", count: 4 },
-          { name: "summarize", count: 1 },
-        ],
-      }),
-    ];
-
-    expect(aggregateSkillCounts(sessions, 2)).toEqual([
-      { name: "review", count: 5 },
-      { name: "kami", count: 2 },
-    ]);
-  });
-
-  it("returns an empty list when sessions have no skill usage", () => {
-    expect(
-      aggregateSkillCounts([
-        session("a", "2026-01-01T23:00:00.000Z", "alpha", 0.25, 100),
-      ]),
-    ).toEqual([]);
+    expect(aggregateSkillCounts(sessions)).toEqual([{ name: "tdd", count: 1 }]);
+    expect(aggregateSkillCounts(sessions, 0)).toEqual([]);
   });
 });

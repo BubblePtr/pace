@@ -29,8 +29,9 @@ import { ContextUsageMeter } from "@/shared/ui/context-usage-meter";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
 import { Activity, AnimatedHistory } from "@/shared/ui/icons";
 import { ModelSelectorControl } from "@/shared/ui/model-selector/model-selector-control";
-import { PiBarChart } from "@/shared/ui/pi-bar-chart";
+import { PiHeatmap } from "@/shared/ui/pi-heatmap";
 import { PiKpi } from "@/shared/ui/pi-kpi";
+import { PiLineChart, PiSparkline } from "@/shared/ui/pi-line-chart";
 import { PiTrajectoryInspector } from "@/shared/ui/pi-trajectory-inspector";
 import { PiTrajectoryLedger, TrajectoryStepBadge } from "@/shared/ui/pi-trajectory-ledger";
 import { PiTrajectoryStrip } from "@/shared/ui/pi-trajectory-strip";
@@ -116,9 +117,11 @@ const cases: Array<{
   { name: "Activity", ui: <Activity /> },
   { name: "DotMatrix", ui: <DotMatrix /> },
   { name: "PiKpi", ui: <PiKpi label="Cost" value={1} /> },
+  { name: "PiLineChart", ui: <PiLineChart aria-label="Trend" points={[]} /> },
+  { name: "PiSparkline", ui: <PiSparkline values={[1, 2]} /> },
   {
-    name: "PiBarChart",
-    ui: <PiBarChart aria-label="Trend" data={[]} series={[]} />,
+    name: "PiHeatmap",
+    ui: <PiHeatmap aria-label="Grid" cellLabel={() => "cell"} columns={[{ key: "0" }]} levelOf={() => 0} rows={[{ key: "r" }]} values={[[0]]} />,
   },
   { name: "ContextUsageMeter", ui: <ContextUsageMeter usage={null} /> },
   {

@@ -94,8 +94,9 @@ Live Chat 中的本地文件链接由会话页面处理，流式与已完成回�
 
 ## 数据与指标
 
-- `PiKpi`：`layout: "stacked" | "inline"`，默认 `stacked`；仪表盘卡片用 stacked，紧凑行 / 侧栏用 inline。值传数字走 `formatOptions`（内部 `Intl.NumberFormat`）；自定义展示才传 `children`，它会整个替换格式化结果。
-- `PiBarChart`：`aria-label` 必填；`series` 的 `color` 只取 `--pigui-data-*`，页面里的顺序表见 `usage.tsx:48`。刻意不是图表库；折线 / 面积 / 热力等 #87 等需求驱动，不要临时引入 recharts。
+- `PiKpi`：`layout: "stacked" | "inline"`，默认 `stacked`；仪表盘卡片用 stacked，紧凑行 / 侧栏用 inline。值传数字走 `formatOptions`（内部 `Intl.NumberFormat`）；自定义展示才传 `children`，它会整个替换格式化结果。`footer` 槽放值行下方的装饰内容，目前只放 `PiSparkline`。
+- `PiLineChart`：`aria-label` 必填；单序列，`color` 只取 `--pigui-data-*`；`renderTooltip` 给了才有悬停 tooltip；空数据显示 `emptyLabel` 并保持高度。`PiSparkline` 是它的装饰版：无坐标轴、无 tooltip、`aria-hidden`。
+- `PiHeatmap`：行 × 列网格，只有一种色相（`--pigui-data-blue` 经 `color-mix` 推六档，档位 0..5 由 `levelOf` 决定，页面用 `rankLevels` 按排名分档以免离群值压平其余）；`cellLabel` 必填，是每格的可访问名。刻意不是图表库；面积 / 日历热力等 #87 等需求驱动，不要临时引入 recharts。分类色在页面里按排名固定分配、不循环，第六个实体折入 `--pigui-data-slate` 的 Other（`usage.tsx` 顶部的 `seriesColors`）。
 - `ContextUsageMeter`：`usage` 为 null 只画空轨道；阈值 70% / 90% 在组件内，页面不算颜色。footer 行右侧一枚 14px 圆环，是它唯一的家。
 
 ## 视觉原语

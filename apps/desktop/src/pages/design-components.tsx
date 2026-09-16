@@ -5,8 +5,9 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { PaceWordmark } from "@/shared/ui/pace-wordmark";
 import { DotMatrix } from "@/shared/ui/dot-matrix";
-import { PiBarChart } from "@/shared/ui/pi-bar-chart";
+import { PiHeatmap } from "@/shared/ui/pi-heatmap";
 import { PiKpi } from "@/shared/ui/pi-kpi";
+import { PiLineChart, PiSparkline } from "@/shared/ui/pi-line-chart";
 import {
   SessionDock,
   SessionDockTrigger,
@@ -157,57 +158,103 @@ function PiKpiGallery() {
         <Variant caption="no value">
           <PiKpi label="Pending metric" />
         </Variant>
+        <Variant caption="with footer sparkline">
+          <div className="w-56">
+            <PiKpi
+              delta="+18% vs previous 30 days"
+              footer={<PiSparkline values={[2, 3, 1, 4, 6, 5, 9]} />}
+              formatOptions={{ style: "currency", currency: "USD" }}
+              label="Cost"
+              value={129.88}
+            />
+          </div>
+        </Variant>
       </VariantRow>
     </GallerySection>
   );
 }
 
-const barChartSeries = [
-  { key: "input", label: "Input", color: "var(--pigui-data-blue)" },
-  { key: "output", label: "Output", color: "var(--pigui-data-orange)" },
-];
-
-const barChartData = ["Mon", "Tue", "Wed", "Thu", "Fri"].map((label, index) => ({
-  key: label.toLowerCase(),
+const lineChartPoints = ["Jun 1", "Jun 2", "Jun 3", "Jun 4", "Jun 5", "Jun 6", "Jun 7"].map((label, index) => ({
+  key: label,
   label,
-  values: { input: (index + 1) * 8, output: (index + 1) * 3 },
+  value: [1.2, 0, 3.4, 2.1, 0.6, 8.9, 2.4][index],
 }));
 
-function PiBarChartGallery() {
+function PiLineChartGallery() {
   return (
-    <GallerySection title="PiBarChart">
+    <GallerySection title="PiLineChart">
       <VariantRow>
-        <Variant caption="stacked multi-series">
-          <div className="w-80">
-            <PiBarChart
-              aria-label="Stacked demo chart"
-              data={barChartData}
-              series={barChartSeries}
+        <Variant caption="single series with hover tooltip">
+          <div className="w-96">
+            <PiLineChart
+              aria-label="Daily cost demo"
+              height={160}
+              points={lineChartPoints}
+              renderTooltip={(point) => (
+                <Text as="p" display="block" type="supporting">
+                  {point.label}: ${point.value.toFixed(2)}
+                </Text>
+              )}
+              valueFormatter={(value) => `$${value}`}
             />
           </div>
         </Variant>
-        <Variant caption="single series, empty bucket">
-          <div className="w-80">
-            <PiBarChart
-              aria-label="Single series demo chart"
-              data={[
-                { key: "a", label: "A", values: { input: 12 } },
-                { key: "b", label: "B", values: { input: 0 } },
-                { key: "c", label: "C", values: { input: 7 } },
-              ]}
-              series={[barChartSeries[0]]}
+        <Variant caption="empty (no data), custom label">
+          <div className="w-96">
+            <PiLineChart aria-label="Empty demo chart" emptyLabel="No usage in this range" height={96} points={[]} />
+          </div>
+        </Variant>
+        <Variant caption="PiSparkline (decorative)">
+          <div className="w-40">
+            <PiSparkline values={[3, 5, 2, 8, 6, 9, 4]} />
+          </div>
+        </Variant>
+      </VariantRow>
+    </GallerySection>
+  );
+}
+
+const heatmapRows = ["Mon", "Tue", "Wed"].map((label) => ({ key: label.toLowerCase(), label }));
+const heatmapColumns = Array.from({ length: 12 }, (_, hour) => ({
+  key: String(hour),
+  label: hour % 6 === 0 ? `${String(hour).padStart(2, "0")}:00` : undefined,
+}));
+const heatmapValues = [
+  [0, 0, 1, 3, 5, 2, 0, 0, 4, 9, 1, 0],
+  [1, 0, 0, 2, 2, 6, 7, 0, 0, 1, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+];
+
+function PiHeatmapGallery() {
+  return (
+    <GallerySection title="PiHeatmap">
+      <VariantRow>
+        <Variant caption="weekday × hour, six sequential levels, hover tooltip">
+          <div className="w-96">
+            <PiHeatmap
+              aria-label="Rhythm demo"
+              cellLabel={(row, column, value) => `${row.label} ${column.key}:00: ${value}`}
+              columns={heatmapColumns}
+              levelOf={(value) => (value === 0 ? 0 : Math.min(5, Math.ceil(value / 2)))}
+              renderTooltip={(row, column, value) => (
+                <Text as="p" display="block" type="supporting">
+                  {row.label} {column.key}:00 · {value}
+                </Text>
+              )}
+              rows={heatmapRows}
+              values={heatmapValues}
             />
           </div>
         </Variant>
-        <Variant caption="empty (no data), default and custom label">
-          <div className="flex w-80 flex-col gap-2">
-            <PiBarChart aria-label="Empty demo chart" data={[]} height={96} series={[]} />
-            <PiBarChart
-              aria-label="Empty demo chart with custom label"
-              data={[]}
-              emptyLabel="No usage in this range"
-              height={96}
-              series={[]}
+        <Variant caption="all empty">
+          <div className="w-96">
+            <PiHeatmap
+              aria-label="Empty rhythm demo"
+              cellLabel={(row, column) => `${row.label} ${column.key}:00: none`}
+              columns={heatmapColumns}
+              levelOf={() => 0}
+              rows={heatmapRows}
+              values={heatmapRows.map(() => heatmapColumns.map(() => 0))}
             />
           </div>
         </Variant>
@@ -2384,7 +2431,8 @@ function ModelSelectorControlGallery() {
 export const componentExamples: ComponentExample[] = [
   { name: "PaceWordmark", category: "Visual primitives", description: "Separated Pace brand lettering with theme-aware color.", Preview: PaceWordmarkGallery },
   { name: "PiKpi", category: "Data & metrics", description: "At-a-glance metrics, totals, deltas, and missing values.", Preview: PiKpiGallery },
-  { name: "PiBarChart", category: "Data & metrics", description: "Compare usage across time with single or stacked series.", Preview: PiBarChartGallery },
+  { name: "PiLineChart", category: "Data & metrics", description: "Single-series trend with crosshair hover, plus the decorative PiSparkline.", Preview: PiLineChartGallery },
+  { name: "PiHeatmap", category: "Data & metrics", description: "Row × column grid on one sequential hue; levels come from the caller.", Preview: PiHeatmapGallery },
   { name: "ChatRunFailure", category: "Conversation", description: "Readable failures, provider settings, model changes, and request retries.", Preview: ChatRunFailureGallery },
   { name: "ChatMessage", category: "Conversation", description: "User and assistant messages with attachments and actions.", Preview: ChatMessageGallery },
   { name: "ChatConversation", category: "Conversation", description: "Scrollable conversation history with automatic bottom pinning.", Preview: ChatConversationGallery },
