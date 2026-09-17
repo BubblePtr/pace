@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
+import { relaxCspForDevServer } from "./vite-dev-csp";
 
 // The @pace/* workspace packages are internal TS source, not external runtime
 // deps — bundle them into the main/preload output so the utilityProcess can find
@@ -128,7 +129,7 @@ export default defineConfig({
   },
   renderer: {
     root: ".",
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), relaxCspForDevServer()],
     clearScreen: false,
     build: rendererBuild as any,
     resolve: {
