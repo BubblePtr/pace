@@ -15,6 +15,40 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.11",
+    date: "2026-09-17",
+    title: "A cost cockpit",
+    summary: "Usage rebuilds around spend with period deltas and a rhythm heatmap, and the composer's model choice applies from the very first message.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.11",
+    changes: [
+      {
+        kind: "improved",
+        title: "Usage is a cost cockpit",
+        description: "Pick a period — 7, 30 or 90 days, or all time — and read four KPI tiles with sparklines and period-over-period deltas, a daily cost line, a weekday × hour rhythm heatmap in your local time, and ranked rows by project, model, tool and skill.",
+      },
+      {
+        kind: "improved",
+        title: "Bundled Pi 0.85.1",
+        description: "Sessions run on the newer Pi runtime without any extra setup.",
+      },
+      {
+        kind: "fixed",
+        title: "Composer model applies from the start",
+        description: "The model and thinking level picked in the composer now reach Pi when the session is created, so even the first message runs on your choice.",
+      },
+      {
+        kind: "fixed",
+        title: "Child sessions resolve after restart",
+        description: "A finished subagent's session file is resolved through the session manager, so opening a child's timeline keeps working once the live runtime is gone.",
+      },
+      {
+        kind: "fixed",
+        title: "Open child session reads as a button",
+        description: "The Inspector action renders as a filled button again instead of a text link that was easy to miss.",
+      },
+    ],
+  },
+  {
     version: "0.0.10",
     date: "2026-09-15",
     title: "Follow your subagents",
