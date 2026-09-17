@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { VERSION as PI_VERSION } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { createEnvironmentPreflightReader } from "./environment-preflight";
 
@@ -45,7 +46,8 @@ describe("environment preflight", () => {
     expect(whichCommand).not.toHaveBeenCalledWith("pi", expect.anything());
     expect(report.checks.find((check) => check.id === "pi_runtime")).toMatchObject({
       status: "pass",
-      detail: expect.stringMatching(/Pi 0\.84\.3.*SDK/),
+      // The preflight must report the engine actually installed, not a pinned literal.
+      detail: expect.stringContaining(`Pi ${PI_VERSION} · SDK`),
     });
   });
 

@@ -38,7 +38,7 @@ Theme 只影响 Pi 终端，GUI 只读展示。drop-in 没有 Package Filter，�
 
 后端使用 `DefaultPackageManager` 和 `SettingsManager`，不 spawn CLI。每次动作重新读取 settings，同 agentDir 的写动作串行化；SDK FileSettingsStorage 锁保护落盘，写后等待 `flush()` 并检查 `drainErrors()`，不能把失败报告为成功。不同进程同时更新 packages 数组仍受 SDK 的最后写入语义约束，Pace 不承诺跨进程事务。
 
-Resource Filter 用 `+path` / `-path` 精确项，不用 `!pattern`：文件名可能含 glob 字符，而且 `!` 无法覆盖已有 `+path`。Pi 0.84.3 对 CLI 登记的单文件本地包和裸目录包忽略 Filter，无法原生禁用；UI 禁用控件并解释，后端返回明确错误，不写出假成功，SDK contract test 固定这一边界。
+Resource Filter 用 `+path` / `-path` 精确项，不用 `!pattern`：文件名可能含 glob 字符，而且 `!` 无法覆盖已有 `+path`。Pi 0.84.3 至 0.85.1 对 CLI 登记的单文件本地包和裸目录包忽略 Filter，无法原生禁用；UI 禁用控件并解释，后端返回明确错误，不写出假成功，SDK contract test 固定这一边界。
 
 管理动作没有 Session 身份。进度由 SDK callback 累计，随方法结果一次性返回，不进入 Session 事件流；实时进度通道留待后续设计。settings 变更在下一个新 Session 生效，运行中的 Session 不受影响，`/reload` 不纳入。
 

@@ -4,7 +4,7 @@ Pace 管理根 Session 及其独立进程；子代理插件管理内部子会话
 
 ## 原版插件
 
-验证基线为 Pi SDK 0.84.3 与 Tintinweb 0.19.0，上游 commit `e955e29c51b7a6cce37e1108cd2d6c57a77e151c`。在 Packages 中使用上游来源即可，不再要求 BubblePtr fork 或 `subagents:host:ready` 协议：
+验证基线为 Pi SDK 0.84.3 与 Tintinweb 0.19.0，上游 commit `e955e29c51b7a6cce37e1108cd2d6c57a77e151c`；SDK 升至 0.85.1 后单元与 contract 测试通过，打包 E2E 尚未在 0.85.1 上重跑。在 Packages 中使用上游来源即可，不再要求 BubblePtr fork 或 `subagents:host:ready` 协议：
 
 ```text
 git:github.com/tintinweb/pi-subagents@e955e29c51b7a6cce37e1108cd2d6c57a77e151c
