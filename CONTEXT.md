@@ -149,7 +149,7 @@ Pace 唯一支持的 agent runtime，负责模型调用、工具执行、session
 _Avoid_: Generic agent runtime, ACP agent, provider
 
 **Resource Management**:
-Pace 插件系统三个面里的管理面：安装、卸载、更新 Package，启用、禁用 Resource，并展示版本与加载诊断。另外两个面是贡献面（扩展向 GUI 声明 Surface、UI request，ADR-0018 / #85）和执行面（Pi 加载并运行 Resource，Pace 不介入）。首版只管 user scope（`~/.pi/agent/settings.json`），Package 与 Filter 写回走 Pi SDK 的 `PackageManager` 与 `SettingsManager`，不 spawn `pi` CLI，不引入 Pi 没有的概念；settings 变更与 Pi 一致，在下一个 Session 创建时生效，运行中的 Session 不受影响。它的入口是主侧边栏的 Packages 页（路由 `/packages`，旧的 `/setup` 重定向过去），与 Trajectory、Usage 并列：Add local resource 将本地资源复制到约定目录；不提供本地 Package 的 Register。Pi 0.84.3 忽略单文件／裸目录本地包的 Filter，因此不能原生禁用，Pace 明确报错。详情关联最近活动 Session 的扩展错误，包行展示 Update available（ADR-0037）。
+Pace 插件系统三个面里的管理面：安装、卸载、更新 Package，启用、禁用 Resource，并展示版本与加载诊断。另外两个面是贡献面（扩展向 GUI 声明 Surface、UI request，ADR-0018 / #85）和执行面（Pi 加载并运行 Resource，Pace 不介入）。首版只管 user scope（`~/.pi/agent/settings.json`），Package 与 Filter 写回走 Pi SDK 的 `PackageManager` 与 `SettingsManager`，不 spawn `pi` CLI，不引入 Pi 没有的概念；settings 变更与 Pi 一致，在下一个 Session 创建时生效，运行中的 Session 不受影响。它的入口是主侧边栏的 Packages 页（路由 `/packages`，旧的 `/setup` 重定向过去），与 Trajectory、Usage 并列：Add local resource 将本地资源复制到约定目录；不提供本地 Package 的 Register。Pi 0.84.3 至 0.85.1 忽略单文件／裸目录本地包的 Filter，因此不能原生禁用，Pace 明确报错。详情关联最近活动 Session 的扩展错误，包行展示 Update available（ADR-0037）。
 _Avoid_: Extension control plane, plugin manager, marketplace, profile, workspace-scope toggle, hot reload
 
 **Package**:
