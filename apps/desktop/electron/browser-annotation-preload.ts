@@ -15,7 +15,8 @@ import { createAnnotationOverlay } from "./browser-annotation-overlay";
  * because a hostile page with a handle on any Pace API is exactly what the
  * annotation layer must not create. Traffic goes one way, over a channel of
  * its own that main re-validates on arrival (PRD S2 constraint 2) — never over
- * `pigui:invoke`, which has no sender check at all.
+ * `pigui:invoke`, which is scoped to the main window's own sender and speaks
+ * a different, command-shaped protocol.
  *
  * It also shares no module with `preload.ts`: electron-vite would hoist a
  * common import into a chunk, and a sandboxed preload cannot require one
