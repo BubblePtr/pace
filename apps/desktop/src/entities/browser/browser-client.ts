@@ -7,17 +7,14 @@ import type {
   BrowserTabTarget,
   BrowserViewRect,
 } from "@/shared/browser-protocol";
-import type { ProjectBrowserTabs } from "./browser-url-memory";
 
-/** Native views belong to main; every page command names its Session and tab. */
-export function attachBrowserSession(
-  sessionId: string,
-  remembered?: ProjectBrowserTabs,
-) {
-  return invoke<BrowserSessionState>("browser_attach", {
-    sessionId,
-    ...remembered,
-  });
+/**
+ * Native views belong to main; every page command names its Session and tab.
+ * Reattaches whatever native tabs main already has for this Session — it
+ * never restores a previously saved tab group (#224).
+ */
+export function attachBrowserSession(sessionId: string) {
+  return invoke<BrowserSessionState>("browser_attach", { sessionId });
 }
 export function openBrowserTab(sessionId: string) {
   return invoke<BrowserSessionState>("browser_open", { sessionId });

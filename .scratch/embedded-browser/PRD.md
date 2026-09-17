@@ -20,6 +20,8 @@ Pi 改完前端代码后,用户要在外部浏览器里看效果、再用文字�
 
 ### 2. URL 来源:手输 + 按 Project 记忆
 
+> **2026-09-17 更新(#224):本节的 localStorage 恢复机制已被弃用,不再是当前行为。** 打开 Browser 一律空白空态起步,不再从 `pigui.browserTabs.v1` / `pigui.browserUrls.v1` 恢复上次 tab 组与 URL；`browser-url-memory.ts` 已整体删除。已有 Session 重入仍附着活着的原生实例(不经 localStorage,这不是"恢复")。原文保留作历史记录,不改写。
+
 PiGUI 目前对 dev server 零认知(project registry 只有 `{id, path, displayName, addedAt}`,后端只持久化 journal 与 projection)。v1:
 
 - surface 表头一个地址栏,手输 URL,回车导航;前进/后退/刷新/在外部浏览器打开。
