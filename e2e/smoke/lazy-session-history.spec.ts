@@ -112,8 +112,11 @@ export default function(pi) {
     expect(await starts()).toEqual(startedEvents);
     finishReply();
     await expect(window.getByLabel("Live Chat messages")).toContainText("First execution completed");
-    expect(requests).toHaveLength(1);
+    // The finished first reply also triggers Pace's session auto-title: one
+    // more completion carrying the title prompt.
+    await expect.poll(() => requests.length).toBe(2);
     expect(JSON.stringify(requests[0])).toContain("Historical question");
+    expect(JSON.stringify(requests[1])).toContain("Generate a short title");
     const events = await starts();
     const firstInput = events.find(event => event.type === "input")!;
     timings.push(`first_execution_prepare (click to Pi input hook): ${firstInput.at - firstSubmitAt}ms`);
