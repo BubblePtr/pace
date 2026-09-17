@@ -10,11 +10,6 @@ import type {
 } from "@/shared/browser-protocol";
 import type { PaceRendererApi } from "@/shared/runtime";
 import {
-  getProjectBrowserTabs,
-  rememberProjectBrowserTabs,
-  rememberProjectBrowserUrl,
-} from "@/entities/browser/browser-url-memory";
-import {
   subscribeComposerInjections,
   type ComposerInjection,
 } from "@/entities/session/composer-injections";
@@ -130,10 +125,20 @@ function installPreload(
 function mount() {
   return render(<SessionBrowserPanel docked projectId="p" sessionId="s" />);
 }
+/**
+ * Opens the browser if it is not already, and — since opening never restores
+ * a URL (#224) — types the default preview address when the resulting tab is
+ * still blank. A reattached Session whose native tab already has a URL
+ * (e.g. a second mount of the same Session) is left alone.
+ */
 async function restored() {
   await waitFor(() => expect(screen.queryByText("Loading browser…")).not.toBeInTheDocument());
   const open = screen.queryByRole("button", { name: "Open browser" });
   if (open) await userEvent.click(open);
+  const address = (await screen.findByRole("textbox", {
+    name: "Address",
+  })) as HTMLInputElement;
+  if (!address.value) await userEvent.type(address, "localhost:3000{Enter}");
   await screen.findByDisplayValue("http://localhost:3000/");
 }
 
@@ -144,57 +149,44 @@ describe("SessionBrowserPanel multi-instance", () => {
     vi.restoreAllMocks();
   });
 
-  it("restores saved Project tabs only after an explicit action, including on a new Session", async () => {
+  it("starts blank and ignores any previously persisted tab group", async () => {
+    // Simulate leftover data from the old localStorage-restore feature
+    // (#224): opening the Browser must never read it.
+    window.localStorage.setItem(
+      "pigui.browserTabs.v1",
+      JSON.stringify({
+        p: { tabs: ["http://localhost:3000/", "http://localhost:4000/"], activeIndex: 1 },
+      }),
+    );
     const preload = installPreload();
     const user = userEvent.setup();
-    rememberProjectBrowserTabs("p", {
-      tabs: ["http://localhost:3000/", "http://localhost:4000/"],
-      activeIndex: 1,
-    });
-    const view = mount();
+    mount();
     await screen.findByText("No browser tabs open");
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
     expect(screen.queryByRole("textbox", { name: "Address" })).not.toBeInTheDocument();
     expect(await preload.target()).toBeUndefined();
-    expect(getProjectBrowserTabs("p").tabs).toHaveLength(2);
     expect(preload.invocations).toEqual([{ command: "browser_attach", args: { sessionId: "s" } }]);
 
     await user.click(screen.getByRole("button", { name: "Open browser" }));
-    await screen.findByDisplayValue("http://localhost:4000/");
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
-    view.rerender(
-      <SessionBrowserPanel docked projectId="p" sessionId="next" />,
-    );
-    await screen.findByText("No browser tabs open");
-    expect(await preload.target(0, "next")).toBeUndefined();
-    await user.click(screen.getByRole("button", { name: "Open browser" }));
-    await waitFor(() =>
-      expect(preload.invocations).toContainEqual(
-        expect.objectContaining({
-          command: "browser_attach",
-          args: expect.objectContaining({ sessionId: "next", activeIndex: 1 }),
-        }),
-      ),
-    );
-    expect(
-      await screen.findByDisplayValue("http://localhost:4000/"),
-    ).toBeInTheDocument();
+    expect(preload.invocations).toContainEqual({
+      command: "browser_open",
+      args: { sessionId: "s" },
+    });
   });
 
-  it("does not restore saved tabs across repeated empty mounts", async () => {
-    const preload = installPreload();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
-    const first = mount();
-    await screen.findByText("No browser tabs open");
-    first.unmount();
+  it("opens a new tab in the blank state, with no URL, until one is typed", async () => {
+    installPreload();
+    const user = userEvent.setup();
     mount();
-    await screen.findByText("No browser tabs open");
-    expect(await preload.target()).toBeUndefined();
-    expect(getProjectBrowserTabs("p").tabs).toEqual(["http://localhost:3000/"]);
-    expect(preload.invocations.filter((item) => item.command === "browser_attach")).toEqual([
-      { command: "browser_attach", args: { sessionId: "s" } },
-      { command: "browser_attach", args: { sessionId: "s" } },
-    ]);
+    await user.click(await screen.findByRole("button", { name: "Open browser" }));
+    expect(await screen.findByText("No page loaded")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Address" })).toHaveValue("");
+    await user.type(
+      screen.getByRole("textbox", { name: "Address" }),
+      "localhost:3000{Enter}",
+    );
+    await screen.findByDisplayValue("http://localhost:3000/");
+    expect(screen.queryByText("No page loaded")).not.toBeInTheDocument();
   });
 
   it("prevents duplicate creates while pending and allows retry after failure", async () => {
@@ -263,14 +255,12 @@ describe("SessionBrowserPanel multi-instance", () => {
     expect(screen.getByText("No browser tabs open")).toBeInTheDocument();
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
     expect(preload.invocations.filter((item) => item.command === "browser_open")).toHaveLength(2);
-    expect(getProjectBrowserTabs("p")).toEqual({ tabs: [], activeIndex: -1 });
     expect(count.mock.lastCall?.[0]).toHaveLength(0);
   });
 
   it("keeps background failure and design marks attached to their tab", async () => {
     const user = userEvent.setup();
     const preload = installPreload();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     mount();
     await restored();
     const first = await preload.target();
@@ -326,7 +316,6 @@ describe("SessionBrowserPanel multi-instance", () => {
       }),
     });
     const user = userEvent.setup();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     mount();
     await restored();
     const first = await preload.target();
@@ -341,7 +330,6 @@ describe("SessionBrowserPanel multi-instance", () => {
 
   it("hides on unmount, preserves marks on reattach, and never commands from a narrow Sheet", async () => {
     const preload = installPreload();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     const view = mount();
     await restored();
     preload.mark(await preload.target());
@@ -367,7 +355,6 @@ describe("SessionBrowserPanel multi-instance", () => {
 
   it("ignores events and late navigation completions from the previous Session", async () => {
     const preload = installPreload();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     const view = mount();
     await restored();
     const first = await preload.target();
@@ -380,7 +367,6 @@ describe("SessionBrowserPanel multi-instance", () => {
       preload.host.notify(first);
     });
     expect(screen.queryByText("OLD ERROR")).toBeNull();
-    expect(getProjectBrowserTabs("q").tabs).toEqual([]);
   });
 
   it("sends only the active tab's settled capture once, using the loaded URL", async () => {
@@ -395,7 +381,6 @@ describe("SessionBrowserPanel multi-instance", () => {
     const unsubscribe = subscribeComposerInjections("s", (injection) =>
       injections.push(injection),
     );
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     mount();
     await restored();
     const first = await preload.target();
@@ -441,7 +426,6 @@ describe("SessionBrowserPanel multi-instance", () => {
       const unsubscribe = subscribeComposerInjections("s", (injection) =>
         injections.push(injection),
       );
-      rememberProjectBrowserUrl("p", "http://localhost:3000/");
       const view = mount();
       await restored();
       preload.mark(await preload.target());
@@ -467,7 +451,6 @@ describe("SessionBrowserPanel multi-instance", () => {
   it("falls back to text on capture failure and reports when no composer is mounted", async () => {
     const user = userEvent.setup();
     const preload = installPreload({ failCapture: true });
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     mount();
     await restored();
     preload.mark(await preload.target());
@@ -488,7 +471,6 @@ describe("SessionBrowserPanel multi-instance", () => {
 
   it("hides the native view behind a still while the dock moves, and reuses that still on the next mount", async () => {
     const preload = installPreload();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     const panel = (moving: boolean) => (
       <SessionDockMotionContext.Provider value={moving}>
         <SessionBrowserPanel docked projectId="p" sessionId="s" />
@@ -540,7 +522,6 @@ describe("SessionBrowserPanel multi-instance", () => {
       }),
     });
     const user = userEvent.setup();
-    rememberProjectBrowserUrl("p", "http://localhost:3000/");
     render(
       <>
         <SessionBrowserPanel docked projectId="p" sessionId="s" />

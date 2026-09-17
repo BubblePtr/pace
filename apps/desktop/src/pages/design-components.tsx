@@ -536,11 +536,11 @@ function BrowserSurfaceGallery() {
           </div>
         </Variant>
         {[
-          { caption: "empty — explicit action before creating or restoring tabs", state: { kind: "empty" } as const },
+          { caption: "empty — explicit action before creating a tab", state: { kind: "empty" } as const },
           { caption: "initializing — only checking for existing tabs", state: { kind: "empty", phase: "initializing" } as const },
           { caption: "opening — creation is pending, duplicate clicks are disabled", state: { kind: "empty", phase: "opening" } as const },
           { caption: "creation failed — stay empty and offer another attempt", notice: "The browser could not be opened.", state: { kind: "empty" } as const },
-          { caption: "blank tab — created explicitly, ready for an address", hasTab: true, state: { kind: "empty", phase: "blank" } as const },
+          { caption: "blank tab — created explicitly, ready for an address", hasTab: true, state: { kind: "blank" } as const },
         ].map(({ caption, hasTab, notice, state }) => (
           <Variant caption={caption} key={caption}>
             <VStack

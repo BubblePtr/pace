@@ -40,7 +40,10 @@ import { describeLoadError } from "./describe-load-error";
 export type BrowserSurfaceState =
   | { kind: "narrow" }
   | { kind: "unsupported" }
-  | { kind: "empty"; phase?: "idle" | "initializing" | "opening" | "blank" }
+  | { kind: "empty"; phase?: "idle" | "initializing" | "opening" }
+  // A tab exists but has not navigated anywhere yet — distinct from "empty"
+  // (no tabs at all), since it still shows the tab strip and address bar.
+  | { kind: "blank" }
   | { kind: "live" }
   | { kind: "error"; message: string };
 
@@ -62,7 +65,7 @@ function showsBrowserChrome(state: BrowserSurfaceState) {
   if (state.kind === "narrow" || state.kind === "unsupported") {
     return false;
   }
-  return state.kind !== "empty" || state.phase === "blank";
+  return state.kind !== "empty";
 }
 
 type BrowserSurfaceOwnProps = {
@@ -377,18 +380,17 @@ function renderViewportBody(
           title="Browser requires the desktop app."
         />
       );
+    case "blank":
+      return (
+        <EmptyState
+          className="h-full justify-center px-4"
+          description="Enter the address of a running dev server to preview it here."
+          icon={<Globe className="size-5 text-muted" />}
+          isCompact
+          title="No page loaded"
+        />
+      );
     case "empty":
-      if (state.phase === "blank") {
-        return (
-          <EmptyState
-            className="h-full justify-center px-4"
-            description="Enter the address of a running dev server to preview it here."
-            icon={<Globe className="size-5 text-muted" />}
-            isCompact
-            title="No page loaded"
-          />
-        );
-      }
       return (
         <EmptyState
           style={{
@@ -397,7 +399,7 @@ function renderViewportBody(
             paddingInline: "var(--spacing-4)",
           }}
           title={state.phase === "initializing" ? "Loading browser…" : "No browser tabs open"}
-          description="Open the browser to preview a website. Saved project tabs will be restored."
+          description="Open the browser to preview a website."
           icon={<Globe className="size-5 text-muted" />}
           isCompact
           actions={

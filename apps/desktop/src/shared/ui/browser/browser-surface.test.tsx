@@ -272,7 +272,7 @@ describe("BrowserSurface", () => {
 
   it("keeps the design controls out of reach until a page is live", () => {
     renderSurface({
-      state: { kind: "empty", phase: "blank" },
+      state: { kind: "blank" },
       annotationCount: 2,
       isDesignMode: true,
     });
@@ -289,7 +289,7 @@ describe("BrowserSurface", () => {
   });
 
   it("only offers Open in browser once there is a page to open", () => {
-    renderSurface({ state: { kind: "empty", phase: "blank" } });
+    renderSurface({ state: { kind: "blank" } });
     expect(
       screen.getByRole("button", { name: "Open in default browser" }),
     ).toBeDisabled();

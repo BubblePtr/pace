@@ -19,10 +19,6 @@ import {
   setBrowserVisible,
   subscribeBrowserEvents,
 } from "@/entities/browser/browser-client";
-import {
-  getProjectBrowserTabs,
-  rememberProjectBrowserTabs,
-} from "@/entities/browser/browser-url-memory";
 import { injectIntoComposer } from "@/entities/session/composer-injections";
 import { isElectronRuntime } from "@/shared/runtime";
 import type {
@@ -79,7 +75,6 @@ function BrowserSessionContent({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
   const openingRef = useRef(false);
-  const hasHadTabs = useRef(false);
   const [snapshot, setSnapshot] = useState<{
     tabId: string;
     image: string;
@@ -164,18 +159,8 @@ function BrowserSessionContent({
 
   useEffect(() => {
     if (!group) return;
-    // An initial empty group must not erase the URLs waiting for explicit restore.
-    if (group.tabs.length > 0) hasHadTabs.current = true;
-    if (hasHadTabs.current) {
-      rememberProjectBrowserTabs(projectId, {
-        tabs: group.tabs.map((tab) => tab.url),
-        activeIndex: group.tabs.findIndex(
-          (tab) => tab.tabId === group.activeTabId,
-        ),
-      });
-    }
     instancesCallback.current?.(group.tabs);
-  }, [group, projectId]);
+  }, [group]);
 
   const active =
     group?.tabs.find((tab) => tab.tabId === group.activeTabId) ?? null;
@@ -194,7 +179,7 @@ function BrowserSessionContent({
         : active?.url
           ? { kind: "live" }
           : tabCount > 0
-            ? { kind: "empty", phase: "blank" }
+            ? { kind: "blank" }
             : available && group === null && !actionError
               ? { kind: "empty", phase: "initializing" }
               : isOpening
@@ -281,12 +266,9 @@ function BrowserSessionContent({
     if (!available || openingRef.current) return;
     openingRef.current = true;
     setIsOpening(true);
-    await changeTabs(() => {
-      const remembered = getProjectBrowserTabs(projectId);
-      return !groupRef.current?.tabs.length && remembered.tabs.length > 0
-        ? attachBrowserSession(sessionId, remembered)
-        : openBrowserTab(sessionId);
-    });
+    // Always a fresh blank tab — opening the Browser never restores a
+    // previous URL (#224).
+    await changeTabs(() => openBrowserTab(sessionId));
     openingRef.current = false;
     if (alive.current) setIsOpening(false);
   };
