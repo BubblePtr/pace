@@ -38,6 +38,8 @@ import {
   isBrowserCommand,
   type BrowserHost,
 } from "./browser-host";
+import { downsampleToCssWidth } from "./capture-downsample";
+import { isTrustedInvokeSender } from "./ipc-sender-guard";
 import { installAppMenu } from "./app-menu";
 import { navigateAppWindow } from "./app-navigation";
 import { createAppUpdater, type AppUpdater, type AutoUpdaterLike } from "./updater";
@@ -583,14 +585,10 @@ function createBrowserView(target: BrowserTabTarget) {
       }
 
       // Resizing by width alone keeps the aspect ratio; who asks for a cap,
-      // and why, is `browser_capture_annotation` in browser-host.ts.
-      const captured = image.getSize();
-      const resized =
-        maxWidth && maxWidth > 0 && captured.width > maxWidth
-          ? image.resize({ width: maxWidth })
-          : image;
-
-      return resized.toDataURL();
+      // and why, is `browser_capture_annotation` in browser-host.ts. The
+      // downsample itself lives in capture-downsample.ts so it can be unit
+      // tested at both 1x and 2x scale without a real HiDPI display.
+      return downsampleToCssWidth(image, maxWidth).toDataURL();
     },
   };
 }
@@ -606,9 +604,9 @@ function sendAnnotationCommand(
 
 /**
  * The embedded page's one way in. Everything it says is checked twice: the
- * sender must be this window's own view (`pigui:invoke` checks nothing, which
- * is why annotations never travel on it), and the message must be one of the
- * three shapes the protocol knows.
+ * sender must be this window's own view (`pigui:invoke` now also checks its
+ * sender, but annotations still get their own channel rather than sharing
+ * one), and the message must be one of the three shapes the protocol knows.
  */
 ipcMain.on(browserAnnotationChannel, (event, payload: unknown) => {
   const target = browserAnnotationSenders.get(event.sender);
@@ -688,7 +686,19 @@ function killBackendForEndToEndTest() {
 
 ipcMain.handle(
   "pigui:invoke",
-  (_event, input: { command: string; args?: Record<string, unknown> }) => {
+  (event, input: { command: string; args?: Record<string, unknown> }) => {
+    // Only the app's own main window may drive commands (dialogs, backend
+    // RPC, browser control) through this channel — an embedded
+    // `WebContentsView` browser tab, or anything else, is rejected outright.
+    if (
+      !isTrustedInvokeSender({
+        sender: event.sender,
+        mainWebContents: mainWindow?.webContents ?? null,
+      })
+    ) {
+      throw new Error("pigui:invoke rejected: sender is not the main window.");
+    }
+
     if (input.command === e2eKillBackendCommand) {
       return killBackendForEndToEndTest();
     }

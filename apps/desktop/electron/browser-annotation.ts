@@ -306,9 +306,10 @@ function readAnnotationsPayload(
 /**
  * The gate on the annotation channel: the message has to come from the
  * embedded view's own webContents, and it has to be one of the shapes
- * this protocol knows. `ipcMain.handle("pigui:invoke")` has no sender check —
- * that is precisely why annotations get their own channel (PRD S2
- * implementation constraint 2).
+ * this protocol knows. `pigui:invoke` also validates its sender now (see
+ * `ipc-sender-guard.ts`), but annotations still get their own channel (PRD S2
+ * implementation constraint 2) rather than sharing one built for a different
+ * message shape and a different set of commands.
  */
 export function acceptBrowserAnnotationMessage<Sender>(input: {
   sender: Sender;
