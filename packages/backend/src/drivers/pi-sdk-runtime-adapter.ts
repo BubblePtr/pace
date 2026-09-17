@@ -912,6 +912,8 @@ async function createPublicPiSdkRuntime(context: {
     let promptCompleted = false;
     let stopped = false;
     let queuedSequence = 0;
+    // Sequence resets each open; a nonce keeps Pace ids from colliding with journaled consumed events.
+    const queuedOpenId = randomUUID();
     const listeners = new Set<(event: PiSdkRuntimeEvent) => void>();
     const pendingEvents: PiSdkRuntimeEvent[] = [];
     let disposed = false;
@@ -1138,8 +1140,19 @@ async function createPublicPiSdkRuntime(context: {
     // One lock for this session: clear+replay must not interleave with
     // another queue write, or Pi would consume a half-rebuilt FIFO.
     let queueWrite: Promise<unknown> = Promise.resolve();
+    // queue_update during clear+replay sees a transiently empty display list.
+    let suppressQueueReconcile = false;
     const withQueueWrite = <T>(fn: () => Promise<T>): Promise<T> => {
-      const run = queueWrite.then(fn, fn);
+      const runLocked = async () => {
+        suppressQueueReconcile = true;
+        try {
+          return await fn();
+        } finally {
+          suppressQueueReconcile = false;
+          reconcileConsumedFromDisplay();
+        }
+      };
+      const run = queueWrite.then(runLocked, runLocked);
       queueWrite = run.then(() => undefined, () => undefined);
       return run;
     };
@@ -1149,6 +1162,71 @@ async function createPublicPiSdkRuntime(context: {
       const { piText: _piText, ...published } = message;
       return published;
     };
+    const markQueuedConsumed = (message: LocalQueued) => {
+      if (message.status !== "pending") {
+        return;
+      }
+      const consumedAt = now();
+      message.status = "processing";
+      message.processingStartedAt = consumedAt;
+      queuedMessages.set(message.id, message);
+      emit({
+        piSessionId: session.sessionId,
+        type: "queued-message-consumed",
+        ts: consumedAt,
+        payload: {
+          type: "queued-message-consumed",
+          queuedMessageId: message.id,
+          consumedAt,
+          surface: "hidden",
+          origin: "sdk",
+        },
+      });
+    };
+    const reconcileConsumedFromDisplay = (
+      followDisplay?: readonly string[],
+      steerDisplay?: readonly string[],
+    ) => {
+      const pending = pendingQueuedMessages();
+      const follow = [
+        ...(followDisplay ??
+          session.getFollowUpMessages?.() ??
+          pending.map((item) => item.piText ?? item.body)),
+      ];
+      const steer = [
+        ...(steerDisplay ??
+          session.getSteeringMessages?.() ??
+          steeringRecords.map((item) => item.piText ?? item.body)),
+      ];
+      const followStart = suffixStart(
+        pending.map((item) => item.piText ?? item.body),
+        follow,
+      );
+      if (followStart !== null) {
+        for (const message of pending.slice(0, followStart)) {
+          markQueuedConsumed(message);
+        }
+      }
+      const steerStart = suffixStart(
+        steeringRecords.map((item) => item.piText ?? item.body),
+        steer,
+      );
+      if (steerStart !== null && steerStart > 0) {
+        steeringRecords.splice(0, steerStart);
+      }
+    };
+    sessionEventListeners.add((event) => {
+      if (suppressQueueReconcile || !isRecord(event) || event.type !== "queue_update") {
+        return;
+      }
+      const followUp = Array.isArray(event.followUp)
+        ? event.followUp.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      const steering = Array.isArray(event.steering)
+        ? event.steering.filter((entry): entry is string => typeof entry === "string")
+        : [];
+      reconcileConsumedFromDisplay(followUp, steering);
+    });
     const sendFollowUp = async (body: string, images?: RuntimePromptImage[]) => {
       const piImages = piImagesFromPrompt(images);
       if (piImages) {
@@ -1236,11 +1314,7 @@ async function createPublicPiSdkRuntime(context: {
 
       const consumed = pending.slice(0, followStart);
       for (const message of consumed) {
-        queuedMessages.set(message.id, {
-          ...message,
-          status: "processing",
-          processingStartedAt: now(),
-        });
+        markQueuedConsumed(message);
       }
       steeringRecords.splice(0, steerStart);
       // Promoted follow-ups replay as steering after surviving steer records.
@@ -1255,13 +1329,12 @@ async function createPublicPiSdkRuntime(context: {
       const attemptFollowUp = async (message: LocalQueued) => {
         try {
           const captured = await captureFollowUpText(message.body, message.images);
+          message.status = "pending";
+          delete message.withdrawnAt;
           if (captured.kind === "consumed") {
-            message.status = "processing";
-            message.processingStartedAt = now();
+            markQueuedConsumed(message);
           } else {
-            message.status = "pending";
             message.piText = captured.piText;
-            delete message.withdrawnAt;
           }
           if (!inPi.some((entry) => entry.id === message.id)) {
             inPi.push(message);
@@ -1344,7 +1417,7 @@ async function createPublicPiSdkRuntime(context: {
       runtime.queueFollowUp = (message, images) => withQueueWrite(async () => {
         assertOpen();
         const queuedMessage: LocalQueued = {
-          id: `pi-sdk:${session.sessionId}:queued:${queuedSequence}`,
+          id: `pi-sdk:${session.sessionId}:queued:${queuedOpenId}:${queuedSequence}`,
           piSessionId: session.sessionId,
           body: message,
           ...(images?.length ? { images } : {}),

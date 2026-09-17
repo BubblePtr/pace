@@ -319,15 +319,17 @@ describe("Session Projection state", () => {
       },
     });
     const processing = applySessionProjectionEvent(queuedAgain, {
-      type: "queued-message-processing-started",
-      queuedMessageId: "queued-2",
-      event: {
-        id: "queued-2-runtime-event",
-        piSessionId: "pi-session-active",
-        kind: "message",
-        role: "user",
-        body: "Then refresh the browser screenshot.",
+      type: "agent-event-received",
+      entry: {
+        seq: 1,
         timestamp: "2026-06-26T08:03:00.000Z",
+        event: {
+          type: "queued-message-consumed",
+          queuedMessageId: "queued-2",
+          consumedAt: "2026-06-26T08:03:00.000Z",
+          surface: "hidden",
+          origin: "sdk",
+        },
       },
     });
 
@@ -357,13 +359,6 @@ describe("Session Projection state", () => {
         id: "queued-2",
         status: "processing",
         processingStartedAt: "2026-06-26T08:03:00.000Z",
-      }),
-    ]);
-    expect(processing.runtimeEvents).toEqual([
-      expect.objectContaining({
-        id: "queued-2-runtime-event",
-        role: "user",
-        body: "Then refresh the browser screenshot.",
       }),
     ]);
     expect(processing.updatedAt).toBe("2026-06-26T08:03:00.000Z");
@@ -672,7 +667,7 @@ describe("Session Projection state", () => {
     ]);
   });
 
-  it("promotes a matching queued follow-up when the runtime emits the user message", () => {
+  it("does not infer queued-message consumption from a user-message body", () => {
     const base = projection({
       id: "active-run",
       status: "running",
@@ -689,7 +684,7 @@ describe("Session Projection state", () => {
         createdAt: "2026-06-26T08:02:00.000Z",
       },
     });
-    const processing = applySessionProjectionEvent(queued, {
+    const echoed = applySessionProjectionEvent(queued, {
       type: "runtime-event-received",
       event: {
         id: "runtime-event-follow-up",
@@ -701,20 +696,218 @@ describe("Session Projection state", () => {
       },
     });
 
-    expect(processing.queuedMessages).toEqual([
+    expect(echoed.queuedMessages).toEqual([
       expect.objectContaining({
         id: "queued-1",
+        status: "pending",
+      }),
+    ]);
+  });
+
+  it("marks only the consumed queued-message id as processing when a sibling shares the body", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-a",
+          piSessionId: "pi-session-active",
+          body: "Same body",
+          status: "pending",
+          createdAt: "2026-06-26T08:02:00.000Z",
+        },
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "Same body",
+          status: "pending",
+          createdAt: "2026-06-26T08:02:10.000Z",
+        },
+      ],
+    });
+    const consumed = applySessionProjectionEvent(base, {
+      type: "agent-event-received",
+      entry: {
+        seq: 1,
+        timestamp: "2026-06-26T08:03:00.000Z",
+        event: {
+          type: "queued-message-consumed",
+          queuedMessageId: "queued-a",
+          consumedAt: "2026-06-26T08:03:00.000Z",
+          surface: "hidden",
+          origin: "sdk",
+        },
+      },
+    });
+
+    expect(consumed.queuedMessages).toEqual([
+      expect.objectContaining({
+        id: "queued-a",
+        status: "processing",
+        processingStartedAt: "2026-06-26T08:03:00.000Z",
+      }),
+      expect.objectContaining({
+        id: "queued-b",
+        status: "pending",
+      }),
+    ]);
+  });
+
+  it("adds a queued message as processing when its consumed event arrived first", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+    });
+    const consumed = applySessionProjectionEvent(base, {
+      type: "agent-event-received",
+      entry: {
+        seq: 1,
+        timestamp: "2026-06-26T08:03:00.000Z",
+        event: {
+          type: "queued-message-consumed",
+          queuedMessageId: "queued-a",
+          consumedAt: "2026-06-26T08:03:00.000Z",
+          surface: "hidden",
+          origin: "sdk",
+        },
+      },
+    });
+    const added = applySessionProjectionEvent(consumed, {
+      type: "queued-message-added",
+      queuedMessage: {
+        id: "queued-a",
+        piSessionId: "pi-session-active",
+        body: "Same body",
+        status: "pending",
+        createdAt: "2026-06-26T08:02:00.000Z",
+      },
+    });
+
+    expect(added.queuedMessages).toEqual([
+      expect.objectContaining({
+        id: "queued-a",
         status: "processing",
         processingStartedAt: "2026-06-26T08:03:00.000Z",
       }),
     ]);
-    expect(processing.runtimeEvents).toEqual([
+  });
+
+  it("applies journaled consumed events to queued messages on snapshot resync", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-a",
+          piSessionId: "pi-session-active",
+          body: "Same body",
+          status: "pending",
+          createdAt: "2026-06-26T08:02:00.000Z",
+        },
+      ],
+    });
+    const resynced = applySessionProjectionEvent(base, {
+      type: "runtime-state-resynced",
+      state: {
+        piSessionId: "pi-session-active",
+        runtimeId: "runtime-active",
+        projectId: "pig",
+        cwd: "/repo",
+        executionState: "ready",
+        status: "running",
+        events: [],
+        replay: [
+          {
+            kind: "agent",
+            entry: {
+              seq: 1,
+              timestamp: "2026-06-26T08:03:00.000Z",
+              event: {
+                type: "queued-message-consumed",
+                queuedMessageId: "queued-a",
+                consumedAt: "2026-06-26T08:03:00.000Z",
+                surface: "hidden",
+                origin: "sdk",
+              },
+            },
+          },
+        ],
+        updatedAt: "2026-06-26T08:03:00.000Z",
+      },
+    });
+
+    expect(resynced.queuedMessages).toEqual([
       expect.objectContaining({
-        id: "runtime-event-follow-up",
-        role: "user",
-        body: "Then refresh the browser screenshot.",
+        id: "queued-a",
+        status: "processing",
+        processingStartedAt: "2026-06-26T08:03:00.000Z",
       }),
     ]);
+  });
+
+  it("does not pre-register historical consumed ids during snapshot resync", () => {
+    const historicalId = "pi-sdk:sdk-session-1:queued:0";
+    const base = projection({
+      id: "cold-session",
+      status: "completed",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [],
+    });
+    const resynced = applySessionProjectionEvent(base, {
+      type: "runtime-state-resynced",
+      state: {
+        piSessionId: "pi-session-active",
+        runtimeId: "runtime-active",
+        projectId: "pig",
+        cwd: "/repo",
+        executionState: "cold",
+        status: "idle",
+        events: [],
+        replay: [
+          {
+            kind: "agent",
+            entry: {
+              seq: 1,
+              timestamp: "2026-06-26T08:03:00.000Z",
+              event: {
+                type: "queued-message-consumed",
+                queuedMessageId: historicalId,
+                consumedAt: "2026-06-26T08:03:00.000Z",
+                surface: "hidden",
+                origin: "sdk",
+              },
+            },
+          },
+        ],
+        updatedAt: "2026-06-26T08:03:00.000Z",
+      },
+    });
+    const added = applySessionProjectionEvent(resynced, {
+      type: "queued-message-added",
+      queuedMessage: {
+        id: historicalId,
+        piSessionId: "pi-session-active",
+        body: "A new follow-up",
+        status: "pending",
+        createdAt: "2026-06-26T09:00:00.000Z",
+      },
+    });
+
+    expect(resynced.pendingConsumedIds).toEqual({});
+    expect(added.queuedMessages).toEqual([
+      expect.objectContaining({
+        id: historicalId,
+        status: "pending",
+      }),
+    ]);
+    expect(added.queuedMessages[0]?.processingStartedAt).toBeUndefined();
   });
 
   it("updates one Live Chat assistant message for streaming events with the same message identity", () => {

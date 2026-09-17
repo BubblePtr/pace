@@ -2518,6 +2518,90 @@ describe("AgentWorkspaceSessionsPage", () => {
     });
   });
 
+  it("keeps the consumed queued id processing when reorder is in flight", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    let releaseReorder: (() => void) | null = null;
+    const bridge = {
+      ...inner,
+      async reorderQueuedMessages(input: { piSessionId: string; orderedIds: string[] }) {
+        await new Promise<void>((resolve) => {
+          releaseReorder = resolve;
+        });
+        return {
+          ok: true as const,
+          queuedMessages: [
+            {
+              id: input.orderedIds[0] ?? "",
+              piSessionId: input.piSessionId,
+              body: "Same body",
+              status: "pending" as const,
+              createdAt: "2026-06-26T08:10:00.000Z",
+            },
+            {
+              id: input.orderedIds[1] ?? "",
+              piSessionId: input.piSessionId,
+              body: "Same body",
+              status: "processing" as const,
+              createdAt: "2026-06-26T08:10:00.000Z",
+              processingStartedAt: "2026-06-26T08:10:02.000Z",
+            },
+          ],
+        };
+      },
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Same body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Same body");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    const headId = cards[0]?.getAttribute("data-queued-message-id") ?? "";
+    const nextId = cards[1]?.getAttribute("data-queued-message-id") ?? "";
+    dragQueuedCard(cards[1]!, cards[0]!);
+    await waitFor(() => expect(releaseReorder).not.toBeNull());
+
+    inner.consumeQueuedMessage(headId);
+
+    await waitFor(() => {
+      const head = within(pendingQueue)
+        .getAllByTestId("chat-queued-message")
+        .find((card) => card.getAttribute("data-queued-message-id") === headId);
+      const next = within(pendingQueue)
+        .getAllByTestId("chat-queued-message")
+        .find((card) => card.getAttribute("data-queued-message-id") === nextId);
+      expect(
+        within(head!).queryByRole("button", { name: "Steer the run with this message" }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(next!).getByRole("button", { name: "Steer the run with this message" }),
+      ).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      releaseReorder?.();
+    });
+
+    await waitFor(() => {
+      const synced = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(synced.map((card) => card.getAttribute("data-queued-message-id"))).toEqual([
+        nextId,
+        headId,
+      ]);
+      expect(
+        within(synced[0]!).getByRole("button", { name: "Steer the run with this message" }),
+      ).toBeInTheDocument();
+      expect(
+        within(synced[1]!).queryByRole("button", { name: "Steer the run with this message" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("drops a card after the target when the pointer is in the lower half", async () => {
     const user = userEvent.setup();
     const bridge = createInMemoryPiRuntimeBridge({
@@ -4441,20 +4525,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     const inner = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:10:00.000Z",
     });
-    const eventListeners = new Map<string, Set<(event: PiRuntimeEvent) => void>>();
     let releaseSteer: (() => void) | null = null;
     const bridge = {
       ...inner,
-      subscribeToEvents(piSessionId: string, listener: (event: PiRuntimeEvent) => void) {
-        const sessionListeners = eventListeners.get(piSessionId) ?? new Set();
-        sessionListeners.add(listener);
-        eventListeners.set(piSessionId, sessionListeners);
-        const unsubscribe = inner.subscribeToEvents(piSessionId, listener);
-        return () => {
-          sessionListeners.delete(listener);
-          unsubscribe();
-        };
-      },
       async steerFromQueue(input: { piSessionId: string; queuedMessageId: string }) {
         await new Promise<void>((resolve) => {
           releaseSteer = resolve;
@@ -4479,6 +4552,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     await user.type(screen.getByPlaceholderText("Queue the next task…"), "Promote B");
     await user.click(screen.getByRole("button", { name: "Send" }));
     const pendingQueue = await screen.findByTestId("queued-message-list");
+    const queuedId =
+      within(pendingQueue).getByTestId("chat-queued-message").getAttribute("data-queued-message-id") ??
+      "";
     await user.click(
       within(pendingQueue).getByRole("button", {
         name: "Steer the run with this message",
@@ -4486,18 +4562,7 @@ describe("AgentWorkspaceSessionsPage", () => {
     );
     await waitFor(() => expect(releaseSteer).not.toBeNull());
 
-    act(() => {
-      for (const listener of eventListeners.get("pi-session-active") ?? []) {
-        listener({
-          id: "runtime-event-consume-b",
-          piSessionId: "pi-session-active",
-          kind: "message",
-          role: "user",
-          body: "Promote B",
-          timestamp: "2026-06-26T08:10:01.000Z",
-        });
-      }
-    });
+    inner.consumeQueuedMessage(queuedId);
     await waitFor(() =>
       expect(
         within(pendingQueue).queryByRole("button", {
@@ -7060,6 +7125,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       ],
       runtimeModel: createSessionRuntimeModel(),
       queuedMessages: [],
+      pendingConsumedIds: {},
       summary: {
         provider: "openai",
         model: "gpt-5-codex",

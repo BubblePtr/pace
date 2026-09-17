@@ -57,6 +57,14 @@ async function createQueuedRuntime(options?: {
     piFollowUps,
     piSteering,
     consumeFollowUp: () => piFollowUps.shift(),
+    notifySession: (event: unknown) => {
+      const calls = session.subscribe.mock.calls as unknown as Array<
+        [(next: unknown) => void]
+      >;
+      for (const [listener] of calls) {
+        listener(event);
+      }
+    },
     piImagesFrom: (images: Array<{ mimeType: string; data: string; name: string }>) =>
       images.map((image) => ({ type: "image" as const, mimeType: image.mimeType, data: image.data })),
   };
@@ -849,30 +857,32 @@ describe("Pi SDK public runtime adapter", () => {
       cwd: "/Users/void/code/opensource/Pig",
     });
 
-    await expect(runtime.queueFollowUp?.("Queued follow-up")).resolves.toEqual({
-      id: "pi-sdk:sdk-session-1:queued:0",
+    const queued = await runtime.queueFollowUp?.("Queued follow-up");
+    const kept = await runtime.queueFollowUp?.("Keep follow-up");
+    expect(queued).toEqual({
+      id: expect.stringMatching(/^pi-sdk:sdk-session-1:queued:[^:]+:0$/),
       piSessionId: "sdk-session-1",
       body: "Queued follow-up",
       status: "pending",
       createdAt: "2026-07-01T00:00:00.000Z",
     });
-    await expect(runtime.queueFollowUp?.("Keep follow-up")).resolves.toMatchObject({
-      id: "pi-sdk:sdk-session-1:queued:1",
+    expect(kept).toMatchObject({
+      id: expect.stringMatching(/^pi-sdk:sdk-session-1:queued:[^:]+:1$/),
       body: "Keep follow-up",
       status: "pending",
     });
     await runtime.steerRun?.("keep steering");
     await expect(
-      runtime.withdrawQueuedMessage?.("pi-sdk:sdk-session-1:queued:0"),
+      runtime.withdrawQueuedMessage?.(queued?.id ?? ""),
     ).resolves.toMatchObject({
       ok: true,
       queuedMessages: [
         expect.objectContaining({
-          id: "pi-sdk:sdk-session-1:queued:0",
+          id: queued?.id,
           status: "withdrawn",
         }),
         expect.objectContaining({
-          id: "pi-sdk:sdk-session-1:queued:1",
+          id: kept?.id,
           status: "pending",
         }),
       ],
@@ -1084,10 +1094,21 @@ describe("Pi SDK public runtime adapter", () => {
     stored.push("Other follow-up");
 
     await expect(runtime.withdrawQueuedMessage?.(queued?.id ?? "")).rejects.toThrow(
-      'Pi SDK queued message "pi-sdk:sdk-session-1:queued:0" was not present in the follow-up queue.',
+      `Pi SDK queued message "${queued?.id}" was not present in the follow-up queue.`,
     );
     expect(session.clearQueue).not.toHaveBeenCalled();
     expect(stored).toEqual(["Other follow-up"]);
+  });
+
+  it("does not reuse queued message ids across runtime opens of the same Pi session", async () => {
+    const first = await createQueuedRuntime();
+    const second = await createQueuedRuntime();
+    const earlier = await first.runtime.queueFollowUp?.("A");
+    const later = await second.runtime.queueFollowUp?.("A");
+
+    expect(earlier?.id).not.toBe(later?.id);
+    expect(earlier?.id).toMatch(/^pi-sdk:sdk-session-1:queued:[^:]+:0$/);
+    expect(later?.id).toMatch(/^pi-sdk:sdk-session-1:queued:[^:]+:0$/);
   });
 
   it("withdraws the targeted queued message when two pending follow-ups share a body", async () => {
@@ -1491,6 +1512,125 @@ describe("Pi SDK public runtime adapter", () => {
       ],
     });
     expect(session.clearQueue).not.toHaveBeenCalled();
+  });
+
+  it("emits queued-message-consumed for the consumed id when two follow-ups share a body", async () => {
+    const { runtime, session, piFollowUps, consumeFollowUp, notifySession } = await createQueuedRuntime();
+    const events: Array<{ type?: string; payload?: Record<string, unknown> }> = [];
+    runtime.onEvent?.((event) => events.push(event as { type?: string; payload?: Record<string, unknown> }));
+    const imageA = [{ mimeType: "image/png", data: "aaa", name: "a.png" }];
+    const imageB = [{ mimeType: "image/png", data: "bbb", name: "b.png" }];
+    const first = await runtime.queueFollowUp?.("Same body", imageA);
+    const second = await runtime.queueFollowUp?.("Same body", imageB);
+    consumeFollowUp();
+    notifySession({
+      type: "queue_update",
+      followUp: piFollowUps.map((item) => item.stored),
+      steering: [],
+    });
+
+    expect(
+      events.filter((event) => event.type === "queued-message-consumed"),
+    ).toEqual([
+      expect.objectContaining({
+        type: "queued-message-consumed",
+        payload: expect.objectContaining({
+          type: "queued-message-consumed",
+          queuedMessageId: first?.id,
+        }),
+      }),
+    ]);
+    await expect(runtime.withdrawQueuedMessage?.(second?.id ?? "")).resolves.toMatchObject({
+      ok: true,
+      queuedMessages: expect.arrayContaining([
+        expect.objectContaining({ id: first?.id, status: "processing" }),
+        expect.objectContaining({ id: second?.id, status: "withdrawn" }),
+      ]),
+    });
+  });
+
+  it("suppresses consumed events from a queue_update during replay and emits after the lock releases", async () => {
+    const { runtime, session, piFollowUps, notifySession } = await createQueuedRuntime();
+    const events: Array<{ type?: string; payload?: Record<string, unknown> }> = [];
+    runtime.onEvent?.((event) => events.push(event as { type?: string; payload?: Record<string, unknown> }));
+    const first = await runtime.queueFollowUp?.("A");
+    const second = await runtime.queueFollowUp?.("B");
+    const consumed = () =>
+      events.filter((event) => event.type === "queued-message-consumed");
+    session.clearQueue.mockImplementation(() => {
+      const followUp = piFollowUps.map((item) => item.stored);
+      const steering: string[] = [];
+      piFollowUps.length = 0;
+      notifySession({ type: "queue_update", followUp: [], steering: [] });
+      expect(consumed()).toEqual([]);
+      return { steering, followUp };
+    });
+    let replayed = 0;
+    session.followUp.mockImplementation(async (message: string, images?: unknown) => {
+      piFollowUps.push({ body: message, stored: message, images });
+      replayed += 1;
+      if (replayed === 2) {
+        piFollowUps.shift();
+      }
+    });
+
+    await runtime.reorderQueuedMessages?.([second?.id ?? "", first?.id ?? ""]);
+
+    expect(consumed()).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ queuedMessageId: second?.id }),
+      }),
+    ]);
+  });
+
+  it("emits consumed after a failed replay attempt that then succeeds by being consumed", async () => {
+    const { runtime, session, piFollowUps } = await createQueuedRuntime();
+    const events: Array<{ type?: string; payload?: Record<string, unknown> }> = [];
+    runtime.onEvent?.((event) => events.push(event as { type?: string; payload?: Record<string, unknown> }));
+    const queued = await runtime.queueFollowUp?.("B");
+    let attempts = 0;
+    session.followUp.mockImplementation(async (message: string, images?: unknown) => {
+      if (session.clearQueue.mock.calls.length === 0) {
+        piFollowUps.push({ body: message, stored: message, images });
+        return;
+      }
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("follow-up failed");
+      }
+    });
+
+    await expect(runtime.reorderQueuedMessages?.([queued?.id ?? ""])).resolves.toMatchObject({
+      ok: false,
+      error: "follow-up failed",
+      queuedMessages: [
+        expect.objectContaining({ id: queued?.id, status: "processing" }),
+      ],
+    });
+    expect(
+      events.filter((event) => event.type === "queued-message-consumed"),
+    ).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ queuedMessageId: queued?.id }),
+      }),
+    ]);
+  });
+
+  it("drops consumed steering records on queue_update so later replay does not restore them", async () => {
+    const { runtime, session, piFollowUps, piSteering, notifySession } = await createQueuedRuntime();
+    await runtime.steerRun?.("S1");
+    await runtime.steerRun?.("S2");
+    const queued = await runtime.queueFollowUp?.("A");
+    piSteering.shift();
+    notifySession({
+      type: "queue_update",
+      followUp: piFollowUps.map((item) => item.stored),
+      steering: piSteering.map((item) => item.stored),
+    });
+
+    await runtime.reorderQueuedMessages?.([queued?.id ?? ""]);
+
+    expect(session.steer.mock.calls.map((call) => call[0])).toEqual(["S1", "S2", "S2"]);
   });
 
   it("refuses to reorder when Pi follow-up mode is all", async () => {
