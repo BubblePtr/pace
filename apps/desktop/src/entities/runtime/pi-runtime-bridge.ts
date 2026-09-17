@@ -12,6 +12,7 @@ export type {
 import type {
   AgentRuntimeEvent,
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
   RuntimeModelSelection,
   RuntimePromptImage,
@@ -19,6 +20,7 @@ import type {
 
 export type {
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
   RuntimeModelSelection,
 } from "@pace/core";
@@ -151,6 +153,7 @@ export type PiSessionState = {
   summary?: PiRuntimeSummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   updatedAt: string;
 };
 
@@ -324,5 +327,6 @@ export function cloneSessionState(state: PiSessionState): PiSessionState {
         }
       : undefined,
     contextUsage: state.contextUsage ? { ...state.contextUsage } : undefined,
+    ...(state.followUpMode ? { followUpMode: state.followUpMode } : {}),
   };
 }

@@ -16,6 +16,7 @@ import {
 } from "./session-auto-title";
 import type {
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
   RuntimeGatewayQueueMutationResult,
   RuntimeModelCapability,
@@ -107,6 +108,7 @@ export type PublicPiSdkAgentSession = {
   pendingMessageCount?: number;
   getSteeringMessages?(): readonly string[];
   getFollowUpMessages?(): readonly string[];
+  followUpMode?: RuntimeFollowUpMode;
   sessionManager?: {
     getCwd?(): string | undefined;
     getSessionFile?(): string | undefined;
@@ -605,6 +607,14 @@ function summaryFromSession(session: PublicPiSdkAgentSession) {
   return undefined;
 }
 
+function followUpModeFromSession(
+  session: PublicPiSdkAgentSession,
+): RuntimeFollowUpMode | undefined {
+  return session.followUpMode === "all" || session.followUpMode === "one-at-a-time"
+    ? session.followUpMode
+    : undefined;
+}
+
 /**
  * A context window is the only field that must be a real number: without it
  * there is nothing to be a percentage of. `tokens`/`percent` stay nullable —
@@ -1002,6 +1012,7 @@ async function createPublicPiSdkRuntime(context: {
       sessionFile: session.sessionManager?.getSessionFile?.(),
       modelControls: modelControlsFromSession(session),
       contextUsage: contextUsageFromSession(session),
+      followUpMode: followUpModeFromSession(session),
       seedPromptCount: priorUserPrompts,
       getLeafId() {
         return session.sessionManager?.getLeafId?.() ?? null;
@@ -1041,6 +1052,7 @@ async function createPublicPiSdkRuntime(context: {
           summary: summaryFromSession(session),
           modelControls: modelControlsFromSession(session),
           contextUsage: contextUsageFromSession(session),
+          followUpMode: followUpModeFromSession(session),
           updatedAt: now(),
         };
       },
@@ -1186,10 +1198,11 @@ async function createPublicPiSdkRuntime(context: {
       omittedIds: ReadonlySet<string> = new Set(),
       extraSteering: SteeringRecord[] = [],
     ) => {
-      // Pi follow-up mode `all` drains the whole queue into the agent loop at
-      // once while the display list shrinks per message_start; a reorder in
-      // that window would re-enqueue already-drained messages. Default mode
-      // is one-at-a-time.
+      // Reorder is refused when followUpMode is "all" (see reorderQueuedMessages).
+      // Withdraw still replays here; in `all` mode Pi drains the whole queue
+      // into the agent loop at once while the display list shrinks per
+      // message_start, so a clear+replay in that window can re-enqueue
+      // already-drained messages.
       const pending = pendingQueuedMessages();
       const followDisplay = [
         ...(session.getFollowUpMessages?.() ?? pending.map((item) => item.piText ?? item.body)),
@@ -1424,6 +1437,13 @@ async function createPublicPiSdkRuntime(context: {
 
       runtime.reorderQueuedMessages = (orderedIds) => withQueueWrite(async (): Promise<RuntimeGatewayQueueMutationResult> => {
         assertOpen();
+        if (session.followUpMode === "all") {
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: "Cannot reorder queued messages while follow-up mode is all.",
+          };
+        }
         if (new Set(orderedIds).size !== orderedIds.length) {
           throw new Error("Queued message order must list each pending follow-up exactly once.");
         }
@@ -1581,6 +1601,7 @@ async function createPublicPiSdkRuntime(context: {
       });
       runtime.status = statusFromSession({ session, promptCompleted, stopped });
       runtime.modelControls = modelControlsFromSession(session);
+      runtime.followUpMode = followUpModeFromSession(session);
       runtime.summary = summaryFromSession(session);
     } catch (error) {
       await runtime.dispose?.();

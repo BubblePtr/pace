@@ -2235,6 +2235,7 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   async function renderRunningQueue(
     bridge: PiRuntimeBridge & Pick<InMemoryPiRuntimeBridge, "restoreSessionState">,
+    extras?: Partial<SessionProjection>,
   ) {
     let projection = applySessionProjectionEvent(
       createSessionProjection({
@@ -2276,7 +2277,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       <AgentWorkspaceSessionsView
         projectId="pig-docs"
         runtimeBridge={bridge}
-        sessionProjection={projection}
+        sessionProjection={{ ...projection, ...extras }}
         workspace={{
           id: "pig-docs",
           name: "Pig Docs",
@@ -2331,6 +2332,34 @@ describe("AgentWorkspaceSessionsPage", () => {
       "draggable",
       "true",
     );
+  });
+
+  it("does not drag-reorder queued cards when follow-up mode is all", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const reorderQueuedMessages = vi.fn(inner.reorderQueuedMessages.bind(inner));
+    const bridge = { ...inner, reorderQueuedMessages };
+    await renderRunningQueue(bridge, { followUpMode: "all" });
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    expect(cards[0]).toHaveAttribute("draggable", "false");
+    expect(cards[1]).toHaveAttribute("draggable", "false");
+
+    dragQueuedCard(cards[1]!, cards[0]!);
+
+    expect(reorderQueuedMessages).not.toHaveBeenCalled();
+    expect(within(pendingQueue).getAllByTestId("chat-queued-message")[0]).toHaveTextContent(
+      "First follow-up",
+    );
+    expect(cards[0]).not.toHaveAttribute("data-drop-target");
   });
 
   it("syncs waiting-area statuses when withdraw returns ok:false", async () => {

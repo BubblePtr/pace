@@ -639,7 +639,8 @@ function QueuedMessageList({
     >
       {present.map(({ item: queuedMessage, key, motion }) => {
         const pending = queuedMessage.status === "pending";
-        const canDrag = pending && !reorderInFlight;
+        const reorderable = projection.followUpMode !== "all";
+        const canDrag = pending && !reorderInFlight && reorderable;
 
         return (
           <ChatQueuedMessage
@@ -666,6 +667,7 @@ function QueuedMessageList({
             }}
             onDragOver={(event) => {
               if (
+                !reorderable ||
                 reorderInFlightRef.current ||
                 !draggingIdRef.current ||
                 draggingIdRef.current === queuedMessage.id
@@ -697,6 +699,7 @@ function QueuedMessageList({
               setDraggedMessage(null);
               setDropTarget(null);
               if (
+                !reorderable ||
                 reorderInFlightRef.current ||
                 !fromId ||
                 fromId === queuedMessage.id
@@ -3803,6 +3806,7 @@ function LiveSessionColumn({
         piSessionId: fork.state.piSessionId,
         summary: fork.state.summary,
         modelControls: fork.state.modelControls,
+        followUpMode: fork.state.followUpMode,
         occurredAt: now(),
       });
       forkProjection = applySessionProjectionEvent(forkProjection, {

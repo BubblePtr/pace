@@ -108,6 +108,8 @@ export type RuntimeToolSchemas = {
   schemas: Record<string, RuntimeToolSchema>;
 };
 
+export type RuntimeFollowUpMode = "one-at-a-time" | "all";
+
 export type RuntimeGatewaySnapshot = {
   // Absent on legacy drivers. Cold snapshots contain presentation history only.
   executionState?: "cold" | "ready";
@@ -124,6 +126,7 @@ export type RuntimeGatewaySnapshot = {
   summary?: RuntimeGatewaySummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   updatedAt: string;
 };
 

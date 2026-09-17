@@ -130,6 +130,7 @@ export {
   type RuntimeGatewayEventInput,
   type RuntimeGatewaySummary,
   type RuntimeContextUsage,
+  type RuntimeFollowUpMode,
   type RuntimeThinkingLevel,
   type RuntimeModelInputModality,
   type RuntimeModelCapability,

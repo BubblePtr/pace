@@ -5,6 +5,7 @@ import type {
   PiRuntimeSummary,
   PiSessionState,
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
 } from "@/entities/runtime/pi-runtime-bridge";
 import {
@@ -60,6 +61,7 @@ export type SessionProjection = {
   modelControls: RuntimeModelControls | null;
   // Live context-window occupancy; null until the runtime first reports it.
   contextUsage: RuntimeContextUsage | null;
+  followUpMode?: RuntimeFollowUpMode;
   stale: boolean;
   staleReason: string | null;
   failure: SessionCreationFailure | null;
@@ -96,6 +98,7 @@ export type SessionProjectionEvent =
       piSessionId: string;
       summary?: PiRuntimeSummary;
       modelControls?: RuntimeModelControls;
+      followUpMode?: RuntimeFollowUpMode;
       occurredAt: string;
     }
   | {
@@ -534,6 +537,7 @@ export function applySessionProjectionEvent(
                 : null,
             }
           : projection.modelControls,
+        followUpMode: event.followUpMode ?? projection.followUpMode,
         updatedAt: event.occurredAt,
       };
     case "runtime-event-received":
@@ -818,6 +822,7 @@ export function applySessionProjectionEvent(
         contextUsage: event.state.contextUsage
           ? { ...event.state.contextUsage }
           : projection.contextUsage,
+        followUpMode: event.state.followUpMode ?? projection.followUpMode,
         stale: false,
         staleReason: null,
       };

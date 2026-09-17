@@ -5,7 +5,10 @@ import {
   createPublicPiSdkRuntimeResumer,
 } from "./pi-sdk-runtime-adapter";
 
-async function createQueuedRuntime(options?: { expand?: (text: string) => string }) {
+async function createQueuedRuntime(options?: {
+  expand?: (text: string) => string;
+  followUpMode?: "all" | "one-at-a-time";
+}) {
   const expand = options?.expand ?? ((text: string) => text);
   const piFollowUps: Array<{ body: string; stored: string; images?: unknown }> = [];
   const piSteering: Array<{ body: string; stored: string; images?: unknown }> = [];
@@ -36,6 +39,7 @@ async function createQueuedRuntime(options?: { expand?: (text: string) => string
     }),
     dispose: vi.fn(),
     subscribe: vi.fn(() => vi.fn()),
+    ...(options?.followUpMode ? { followUpMode: options.followUpMode } : {}),
   };
   const runtimeFactory = createPublicPiSdkRuntimeFactory({
     sdk: { createAgentSession: vi.fn(async () => ({ session })) },
@@ -1487,6 +1491,45 @@ describe("Pi SDK public runtime adapter", () => {
       ],
     });
     expect(session.clearQueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reorder when Pi follow-up mode is all", async () => {
+    const { runtime, session, piFollowUps } = await createQueuedRuntime({
+      followUpMode: "all",
+    });
+    const first = await runtime.queueFollowUp?.("A");
+    const second = await runtime.queueFollowUp?.("B");
+
+    await expect(
+      runtime.reorderQueuedMessages?.([second?.id ?? "", first?.id ?? ""]),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/follow-up mode is all/),
+      queuedMessages: [
+        expect.objectContaining({ id: first?.id, body: "A", status: "pending" }),
+        expect.objectContaining({ id: second?.id, body: "B", status: "pending" }),
+      ],
+    });
+    expect(session.clearQueue).not.toHaveBeenCalled();
+    expect(piFollowUps.map((item) => item.stored)).toEqual(["A", "B"]);
+  });
+
+  it("still withdraws a follow-up when Pi follow-up mode is all", async () => {
+    const { runtime, session, piFollowUps } = await createQueuedRuntime({
+      followUpMode: "all",
+    });
+    const first = await runtime.queueFollowUp?.("A");
+    const second = await runtime.queueFollowUp?.("B");
+
+    await expect(runtime.withdrawQueuedMessage?.(first?.id ?? "")).resolves.toMatchObject({
+      ok: true,
+      queuedMessages: expect.arrayContaining([
+        expect.objectContaining({ id: first?.id, status: "withdrawn" }),
+        expect.objectContaining({ id: second?.id, body: "B", status: "pending" }),
+      ]),
+    });
+    expect(session.clearQueue).toHaveBeenCalled();
+    expect(piFollowUps.map((item) => item.stored)).toEqual(["B"]);
   });
 
   it("steers a follow-up into the steering queue and leaves the remaining follow-ups in order", async () => {

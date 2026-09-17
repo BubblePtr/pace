@@ -1,5 +1,6 @@
 import type {
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
   RuntimeGatewayQueueMutationResult,
   RuntimeGatewaySnapshot,
@@ -30,7 +31,14 @@ export type PiSdkUserMessageBoundary = {
 export type PiSdkSnapshotPatch = Partial<
   Pick<
     RuntimeGatewaySnapshot,
-    "sessionName" | "status" | "events" | "summary" | "modelControls" | "contextUsage" | "updatedAt"
+    | "sessionName"
+    | "status"
+    | "events"
+    | "summary"
+    | "modelControls"
+    | "contextUsage"
+    | "followUpMode"
+    | "updatedAt"
   >
 >;
 
@@ -44,6 +52,7 @@ export type PiSdkSessionRuntime = {
   summary?: RuntimeGatewaySummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   /**
    * Next synthetic user message index after reattach (`user:{n}`).
    * Resume/fork must seed this from session history so ids do not collide
@@ -153,6 +162,10 @@ function cloneSnapshot(snapshot: RuntimeGatewaySnapshot): RuntimeGatewaySnapshot
     cloned.contextUsage = cloneContextUsage(snapshot.contextUsage);
   }
 
+  if (snapshot.followUpMode) {
+    cloned.followUpMode = snapshot.followUpMode;
+  }
+
   return cloned;
 }
 
@@ -191,6 +204,10 @@ function snapshotFromRuntime(input: {
     snapshot.contextUsage = cloneContextUsage(input.runtime.contextUsage);
   }
 
+  if (input.runtime.followUpMode) {
+    snapshot.followUpMode = input.runtime.followUpMode;
+  }
+
   return snapshot;
 }
 
@@ -220,6 +237,10 @@ function mergeSnapshotPatch(
 
   if (patch.contextUsage) {
     merged.contextUsage = cloneContextUsage(patch.contextUsage);
+  }
+
+  if (patch.followUpMode) {
+    merged.followUpMode = patch.followUpMode;
   }
 
   if (patch.updatedAt) {

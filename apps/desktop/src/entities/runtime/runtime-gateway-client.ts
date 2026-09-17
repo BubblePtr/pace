@@ -420,6 +420,7 @@ function stateFromSnapshot(snapshot: RuntimeGatewaySnapshot): PiSessionState {
         }
       : {}),
     ...(snapshot.contextUsage ? { contextUsage: { ...snapshot.contextUsage } } : {}),
+    ...(snapshot.followUpMode ? { followUpMode: snapshot.followUpMode } : {}),
     updatedAt: snapshot.updatedAt,
   };
   const summary = runtimeSummaryFromGateway(snapshot.summary);
