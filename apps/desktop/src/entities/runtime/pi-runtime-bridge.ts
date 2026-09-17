@@ -49,6 +49,7 @@ export type RuntimeBridgeFailureStage =
   | "queuing message"
   | "withdrawing queued message"
   | "reordering queued messages"
+  | "steering queued message"
   | "steering run"
   | "stopping run"
   | "configuring model";
@@ -112,7 +113,7 @@ export type PiRuntimeEvent = {
   fatal?: boolean;
 };
 
-export type PiQueuedMessageStatus = "pending" | "processing" | "withdrawn";
+export type PiQueuedMessageStatus = "pending" | "processing" | "steered" | "withdrawn";
 
 export type PiQueuedMessage = {
   id: string;
@@ -122,6 +123,7 @@ export type PiQueuedMessage = {
   status: PiQueuedMessageStatus;
   createdAt: string;
   processingStartedAt?: string;
+  steeredAt?: string;
   withdrawnAt?: string;
 };
 
@@ -194,6 +196,11 @@ export type ReorderQueuedMessagesInput = {
   orderedIds: string[];
 };
 
+export type SteerFromQueueInput = {
+  piSessionId: string;
+  queuedMessageId: string;
+};
+
 export type ReorderQueuedMessagesResult =
   | {
       ok: true;
@@ -259,6 +266,7 @@ export type PiRuntimeBridge = {
   queueFollowUp(input: QueueFollowUpInput): Promise<PiQueuedMessage>;
   withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<ReorderQueuedMessagesResult>;
   reorderQueuedMessages(input: ReorderQueuedMessagesInput): Promise<ReorderQueuedMessagesResult>;
+  steerFromQueue(input: SteerFromQueueInput): Promise<ReorderQueuedMessagesResult>;
   steerRun(input: SteerRunInput): Promise<PiRuntimeEvent>;
   abortRun(input: AbortRunInput): Promise<PiRuntimeEvent>;
   configureModel?(input: ConfigureModelInput): Promise<RuntimeModelControls>;

@@ -132,9 +132,10 @@ export type RuntimeGatewayQueuedMessage = {
   piSessionId: string;
   body: string;
   images?: RuntimePromptImage[];
-  status: "pending" | "processing" | "withdrawn";
+  status: "pending" | "processing" | "steered" | "withdrawn";
   createdAt: string;
   processingStartedAt?: string;
+  steeredAt?: string;
   withdrawnAt?: string;
 };
 

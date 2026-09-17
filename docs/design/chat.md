@@ -53,7 +53,7 @@
 ### 其余 Composer 件
 
 - `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态），点选后把文案填入草稿并聚焦输入框。
-- `ChatQueuedMessage`：队列里的一条；`presence: "none" | "enter" | "exit"` 由 `usePresenceList` 给，不要自己传 `"enter"`。只有 `pending` 的整卡 `draggable`；拖动中 `isDragging`（45% 透明），目标位 `dropTarget: "before" | "after"`（顶/底边 accent 线，由指针落在卡片上半或下半决定）。撤回态不可拖。重排 RPC 进行中卡片不可拖、drop 忽略。
+- `ChatQueuedMessage`：队列里的一条；`presence: "none" | "enter" | "exit"` 由 `usePresenceList` 给，不要自己传 `"enter"`。只有 `pending` 的整卡 `draggable`；拖动中 `isDragging`（45% 透明），目标位 `dropTarget: "before" | "after"`（顶/底边 accent 线，由指针落在卡片上半或下半决定）。`isWithdrawn` 显示 "Withdrawn"，`isSteered` 显示 "Steered"；两者都是终态，无动作、不可拖。重排 RPC 进行中卡片不可拖、drop 忽略。
 - `ModelSelectorControl`：选中项来自 projection；冷会话缺少目录时异步读取 `list_available_model_controls`，不启动 Agent，读取失败不阻塞历史或发送。真正切换模型会准备运行环境。`isDisabled` 在队列模式或提交等待期间为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
 - `ComposerInsertMenu`：一级只有 Add files / Use skill / Chat commands / Use plugin 四项；技能与插件走 `CommandPalette` 搜索。`commands` 默认 `/compact` `/clear`。
 - `ComposerAttachmentDrawer`：`items` 为空返回 null；图片走 Thumbnail，文本走 Token。附件逻辑（大小上限、拒收文案、拼进 prompt）全在 `composer-attachment-logic.ts`，从 `composer-attachments/index.ts` 导入，不在页面里重算。

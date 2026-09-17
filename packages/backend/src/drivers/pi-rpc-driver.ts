@@ -254,6 +254,10 @@ export function createPiRpcProcessDriver(
       throw new Error("Pi RPC driver does not support reorder_queued_messages.");
     },
 
+    async steerFromQueue() {
+      throw new Error("Pi RPC driver does not support steer_from_queue.");
+    },
+
     async steerRun(input) {
       const images = rpcImages(input.images);
       const response = await options.transport.send({

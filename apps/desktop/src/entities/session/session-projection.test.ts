@@ -545,6 +545,133 @@ describe("Session Projection state", () => {
     ]);
   });
 
+  it("treats steered and withdrawn as terminal in the queued-message status merge", () => {
+    const steered = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "steered",
+          createdAt: "2026-06-26T08:01:00.000Z",
+          steeredAt: "2026-06-26T08:01:40.000Z",
+        },
+      ],
+    });
+    const withdrawn = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "withdrawn",
+          createdAt: "2026-06-26T08:01:00.000Z",
+          withdrawnAt: "2026-06-26T08:01:40.000Z",
+        },
+      ],
+    });
+    const processing = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "processing",
+          createdAt: "2026-06-26T08:01:00.000Z",
+          processingStartedAt: "2026-06-26T08:01:30.000Z",
+        },
+      ],
+    });
+
+    expect(
+      applySessionProjectionEvent(steered, {
+        type: "queued-messages-synced",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "pending",
+            createdAt: "2026-06-26T08:01:00.000Z",
+          },
+        ],
+        occurredAt: "2026-06-26T08:02:00.000Z",
+      }).queuedMessages,
+    ).toEqual([
+      expect.objectContaining({
+        id: "queued-b",
+        status: "steered",
+        steeredAt: "2026-06-26T08:01:40.000Z",
+      }),
+    ]);
+    expect(
+      applySessionProjectionEvent(steered, {
+        type: "queued-messages-synced",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "withdrawn",
+            createdAt: "2026-06-26T08:01:00.000Z",
+            withdrawnAt: "2026-06-26T08:02:00.000Z",
+          },
+        ],
+        occurredAt: "2026-06-26T08:02:00.000Z",
+      }).queuedMessages[0]?.status,
+    ).toBe("steered");
+    expect(
+      applySessionProjectionEvent(withdrawn, {
+        type: "queued-messages-synced",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "steered",
+            createdAt: "2026-06-26T08:01:00.000Z",
+            steeredAt: "2026-06-26T08:02:00.000Z",
+          },
+        ],
+        occurredAt: "2026-06-26T08:02:00.000Z",
+      }).queuedMessages[0]?.status,
+    ).toBe("withdrawn");
+    expect(
+      applySessionProjectionEvent(processing, {
+        type: "queued-messages-synced",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "steered",
+            createdAt: "2026-06-26T08:01:00.000Z",
+            steeredAt: "2026-06-26T08:02:00.000Z",
+          },
+        ],
+        occurredAt: "2026-06-26T08:02:00.000Z",
+      }).queuedMessages,
+    ).toEqual([
+      expect.objectContaining({
+        id: "queued-b",
+        status: "steered",
+        steeredAt: "2026-06-26T08:02:00.000Z",
+      }),
+    ]);
+  });
+
   it("promotes a matching queued follow-up when the runtime emits the user message", () => {
     const base = projection({
       id: "active-run",

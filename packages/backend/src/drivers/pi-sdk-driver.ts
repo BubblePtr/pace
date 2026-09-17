@@ -57,6 +57,7 @@ export type PiSdkSessionRuntime = {
   ): Promise<PiSdkQueuedMessage>;
   withdrawQueuedMessage?(queuedMessageId: string): Promise<RuntimeGatewayQueueMutationResult>;
   reorderQueuedMessages?(orderedIds: string[]): Promise<RuntimeGatewayQueueMutationResult>;
+  steerFromQueue?(queuedMessageId: string): Promise<RuntimeGatewayQueueMutationResult>;
   steerRun?(message: string, images?: RuntimePromptImage[]): Promise<void>;
   stopRun?(): Promise<void>;
   sendSubagent?(input: {
@@ -437,6 +438,19 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       }
 
       return runtime.reorderQueuedMessages(input.orderedIds);
+    },
+
+    async steerFromQueue(input) {
+      const runtime = runtimeFor(input.piSessionId, "steer_from_queue");
+
+      if (!runtime.steerFromQueue) {
+        unsupported(
+          "steer_from_queue",
+          "the injected SDK runtime has no steerFromQueue adapter",
+        );
+      }
+
+      return runtime.steerFromQueue(input.queuedMessageId);
     },
 
     async steerRun(input) {

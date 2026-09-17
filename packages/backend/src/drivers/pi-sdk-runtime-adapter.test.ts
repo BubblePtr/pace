@@ -1489,6 +1489,64 @@ describe("Pi SDK public runtime adapter", () => {
     expect(session.clearQueue).not.toHaveBeenCalled();
   });
 
+  it("steers a follow-up into the steering queue and leaves the remaining follow-ups in order", async () => {
+    const { runtime, session, piFollowUps, piSteering, piImagesFrom } = await createQueuedRuntime();
+    const images = [{ mimeType: "image/png", data: "bbb", name: "b.png" }];
+    await runtime.steerRun?.("S1");
+    const first = await runtime.queueFollowUp?.("A");
+    const second = await runtime.queueFollowUp?.("B", images);
+    const third = await runtime.queueFollowUp?.("C");
+
+    const steered = await runtime.steerFromQueue?.(second?.id ?? "");
+    expect(steered).toMatchObject({ ok: true });
+    expect(steered?.queuedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: first?.id, body: "A", status: "pending" }),
+        expect.objectContaining({ id: second?.id, body: "B", status: "steered" }),
+        expect.objectContaining({ id: third?.id, body: "C", status: "pending" }),
+      ]),
+    );
+    expect(steered?.queuedMessages).toHaveLength(3);
+
+    expect(piSteering.map((item) => ({ stored: item.stored, images: item.images }))).toEqual([
+      { stored: "S1", images: undefined },
+      { stored: "B", images: piImagesFrom(images) },
+    ]);
+    expect(piFollowUps.map((item) => item.stored)).toEqual(["A", "C"]);
+    expect(session.steer.mock.calls).toEqual([
+      ["S1"],
+      ["S1"],
+      ["B", piImagesFrom(images)],
+    ]);
+
+    await runtime.reorderQueuedMessages?.([third?.id ?? "", first?.id ?? ""]);
+    expect(piSteering.map((item) => ({ stored: item.stored, images: item.images }))).toEqual([
+      { stored: "S1", images: undefined },
+      { stored: "B", images: piImagesFrom(images) },
+    ]);
+    expect(piFollowUps.map((item) => item.stored)).toEqual(["C", "A"]);
+  });
+
+  it("does not clear Pi when steering a follow-up that was already consumed", async () => {
+    const { runtime, session, consumeFollowUp } = await createQueuedRuntime();
+    const first = await runtime.queueFollowUp?.("A");
+    const second = await runtime.queueFollowUp?.("B");
+    const third = await runtime.queueFollowUp?.("C");
+    consumeFollowUp();
+    consumeFollowUp();
+
+    await expect(runtime.steerFromQueue?.(second?.id ?? "")).resolves.toMatchObject({
+      ok: false,
+      error: "already processing",
+      queuedMessages: [
+        expect.objectContaining({ id: first?.id, status: "processing" }),
+        expect.objectContaining({ id: second?.id, status: "processing" }),
+        expect.objectContaining({ id: third?.id, body: "C", status: "pending" }),
+      ],
+    });
+    expect(session.clearQueue).not.toHaveBeenCalled();
+  });
+
   it("passes resource, auth, model registry, and model options through public createAgentSession", async () => {
     const session = {
       sessionId: "sdk-session-1",

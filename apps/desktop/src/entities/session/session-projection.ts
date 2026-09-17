@@ -682,19 +682,23 @@ export function applySessionProjectionEvent(
       const localById = new Map(
         projection.queuedMessages.map((queuedMessage) => [queuedMessage.id, queuedMessage]),
       );
-      const rank = { pending: 0, processing: 1, withdrawn: 2 } as const;
+      const rank = { pending: 0, processing: 1, steered: 2, withdrawn: 2 } as const;
       const merged = event.queuedMessages.map((incoming) => {
         const local = localById.get(incoming.id);
         if (!local) {
           return { ...incoming };
         }
-        if (rank[local.status] > rank[incoming.status]) {
+        if (
+          rank[local.status] > rank[incoming.status] ||
+          (rank[local.status] === rank[incoming.status] && local.status !== incoming.status)
+        ) {
           return {
             ...incoming,
             status: local.status,
             ...(local.processingStartedAt
               ? { processingStartedAt: local.processingStartedAt }
               : {}),
+            ...(local.steeredAt ? { steeredAt: local.steeredAt } : {}),
             ...(local.withdrawnAt ? { withdrawnAt: local.withdrawnAt } : {}),
           };
         }

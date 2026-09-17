@@ -648,6 +648,7 @@ function QueuedMessageList({
             draggable={canDrag}
             dropTarget={dropTarget?.id === queuedMessage.id ? dropTarget.edge : undefined}
             isDragging={draggingId === queuedMessage.id}
+            isSteered={queuedMessage.status === "steered"}
             isWithdrawn={queuedMessage.status === "withdrawn"}
             key={key}
             presence={motion}
@@ -741,7 +742,7 @@ function FullChatComposer({
   onWithdrawQueuedMessage,
   onReorderQueuedMessages,
   onStopRun,
-  onSteerSubmit,
+  onSteerFromQueue,
   onModelConfigChange,
   onManageModels,
 }: {
@@ -756,7 +757,7 @@ function FullChatComposer({
   onWithdrawQueuedMessage?: (queuedMessageId: string) => Promise<void> | void;
   onReorderQueuedMessages?: (orderedIds: string[]) => Promise<void> | void;
   onStopRun?: () => Promise<void> | void;
-  onSteerSubmit?: (message: string, images?: RuntimePromptImage[]) => Promise<void> | void;
+  onSteerFromQueue?: (queuedMessageId: string) => Promise<void> | void;
   onModelConfigChange?: (selection: RuntimeModelSelection) => Promise<void> | void;
   onManageModels?: () => void;
 }) {
@@ -909,20 +910,18 @@ function FullChatComposer({
     }
   };
   // Queue-first model: the composer always queues while a run is active, and
-  // steering happens from the queued row itself — steer the run with the row's
-  // body, then withdraw the row so the queue reflects what was promoted.
+  // steering happens from the queued row itself as one locked mutation.
   // Decision record: .scratch/composer-redesign/PRD.md
   const steerQueuedMessage = async (queuedMessageId: string) => {
-    const queuedMessage = projection?.queuedMessages.find(
-      (message) => message.id === queuedMessageId,
-    );
-
-    if (!queuedMessage) {
-      return;
-    }
-
     try {
-      await onSteerSubmit?.(queuedMessage.body, queuedMessage.images);
+      await onSteerFromQueue?.(queuedMessageId);
+      setComposerError(null);
+    } catch (error) {
+      setComposerError(errorMessage(error));
+    }
+  };
+  const withdrawQueuedMessage = async (queuedMessageId: string) => {
+    try {
       await onWithdrawQueuedMessage?.(queuedMessageId);
       setComposerError(null);
     } catch (error) {
@@ -979,13 +978,11 @@ function FullChatComposer({
         <QueuedMessageList
           projection={projection}
           onSteer={
-            queueMode && onSteerSubmit
+            queueMode && onSteerFromQueue
               ? (queuedMessageId) => void steerQueuedMessage(queuedMessageId)
               : undefined
           }
-          onWithdraw={(queuedMessageId) =>
-            void onWithdrawQueuedMessage?.(queuedMessageId)
-          }
+          onWithdraw={(queuedMessageId) => void withdrawQueuedMessage(queuedMessageId)}
           onReorder={onReorderQueuedMessages}
         />
       ) : null}
@@ -3563,7 +3560,7 @@ function LiveSessionColumn({
           occurredAt: new Date().toISOString(),
         }),
       );
-      return;
+      throw new Error(result.error);
     }
 
     const next = applySessionProjectionEvent(latestProjectionFor(projection), {
@@ -3619,27 +3616,29 @@ function LiveSessionColumn({
       );
     }
   };
-  const handleSteerSubmit = async (
-    message: string,
-    images?: RuntimePromptImage[],
-  ) => {
+  const handleSteerFromQueue = async (queuedMessageId: string) => {
     const projection = liveProjectionRef.current ?? liveProjection;
 
-    if (!projection?.piSessionId || !queueMode) {
+    if (!projection?.piSessionId) {
       return;
     }
 
-    const event = await getRuntimeBridge().steerRun({
+    const result = await getRuntimeBridge().steerFromQueue({
       piSessionId: projection.piSessionId,
-      message,
-      ...(images?.length ? { images } : {}),
+      queuedMessageId,
     });
 
-    const next = applySessionProjectionEvent(latestProjectionFor(projection), {
-      type: "steer-submitted",
-      event,
-    });
-    commitInteractionProjection(next);
+    commitInteractionProjection(
+      applySessionProjectionEvent(latestProjectionFor(projection), {
+        type: "queued-messages-synced",
+        queuedMessages: result.queuedMessages,
+        occurredAt: new Date().toISOString(),
+      }),
+    );
+
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
   };
   const handleStopRun = async () => {
     const projection = liveProjectionRef.current ?? liveProjection;
@@ -3976,7 +3975,7 @@ function LiveSessionColumn({
               onWithdrawQueuedMessage={handleWithdrawQueuedMessage}
               onReorderQueuedMessages={handleReorderQueuedMessages}
               onStopRun={handleStopRun}
-              onSteerSubmit={handleSteerSubmit}
+              onSteerFromQueue={handleSteerFromQueue}
               onModelConfigChange={handleModelConfigChange}
               onManageModels={onManageModels}
             />

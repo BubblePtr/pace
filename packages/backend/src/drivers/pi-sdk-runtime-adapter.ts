@@ -1181,7 +1181,11 @@ async function createPublicPiSdkRuntime(context: {
     };
     const publishedQueue = (): RuntimeGatewayQueuedMessage[] =>
       [...queuedMessages.values()].map(publicQueued);
-    const replayQueue = async (keep: LocalQueued[], omittedIds: ReadonlySet<string> = new Set()) => {
+    const replayQueue = async (
+      keep: LocalQueued[],
+      omittedIds: ReadonlySet<string> = new Set(),
+      extraSteering: SteeringRecord[] = [],
+    ) => {
       // Pi follow-up mode `all` drains the whole queue into the agent loop at
       // once while the display list shrinks per message_start; a reorder in
       // that window would re-enqueue already-drained messages. Default mode
@@ -1226,7 +1230,10 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
       steeringRecords.splice(0, steerStart);
-      const remainingSteering = [...steeringRecords];
+      // Promoted follow-ups replay as steering after surviving steer records.
+      const remainingSteering = [...steeringRecords, ...extraSteering];
+      const extraSet = new Set(extraSteering);
+      const extraSucceeded = new Set<SteeringRecord>();
       session.clearQueue?.();
 
       const inPi: LocalQueued[] = [];
@@ -1259,6 +1266,9 @@ async function createPublicPiSdkRuntime(context: {
       const attemptSteer = async (entry: SteeringRecord) => {
         try {
           const captured = await captureSteerText(entry.body, entry.images);
+          if (extraSet.has(entry)) {
+            extraSucceeded.add(entry);
+          }
           if (captured.kind === "pending") {
             entry.piText = captured.piText;
             return "queued" as const;
@@ -1292,6 +1302,8 @@ async function createPublicPiSdkRuntime(context: {
       }
       steeringRecords.length = 0;
       steeringRecords.push(...keptSteering);
+      const extraOk = extraSteering.every((entry) => extraSucceeded.has(entry));
+      const leftoverOmitted = extraOk ? omittedIds : new Set<string>();
 
       for (const message of nextKeep) {
         await attemptFollowUp(message);
@@ -1302,17 +1314,17 @@ async function createPublicPiSdkRuntime(context: {
       if (error) {
         const leftover = remaining.filter(
           (item) =>
-            !inPi.some((entry) => entry.id === item.id) && !omittedIds.has(item.id),
+            !inPi.some((entry) => entry.id === item.id) && !leftoverOmitted.has(item.id),
         );
         for (const message of leftover) {
           await attemptFollowUp(message);
         }
         adoptPendingOrder([...inPi, ...failed.filter((item) => item.status === "withdrawn")]);
-        return { drifted: false as const, ok: false as const, error };
+        return { drifted: false as const, ok: false as const, error, extraOk };
       }
 
       adoptPendingOrder(nextKeep);
-      return { drifted: false as const, ok: true as const };
+      return { drifted: false as const, ok: true as const, extraOk };
     };
 
     if (session.followUp) {
@@ -1419,7 +1431,7 @@ async function createPublicPiSdkRuntime(context: {
         const keep: LocalQueued[] = [];
         for (const id of orderedIds) {
           const message = queuedMessages.get(id);
-          if (!message || message.status === "withdrawn") {
+          if (!message || message.status === "withdrawn" || message.status === "steered") {
             throw new Error(`Pi SDK queued message "${id}" was not found.`);
           }
           if (message.status === "processing") {
@@ -1433,6 +1445,84 @@ async function createPublicPiSdkRuntime(context: {
         if (replayed.drifted) {
           throw new Error("Pi follow-up queue drifted during reorder.");
         }
+
+        if (!replayed.ok) {
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: replayed.error,
+          };
+        }
+
+        return {
+          ok: true,
+          queuedMessages: publishedQueue(),
+        };
+      });
+
+      runtime.steerFromQueue = (queuedMessageId) => withQueueWrite(async () => {
+        assertOpen();
+        const queuedMessage = queuedMessages.get(queuedMessageId);
+
+        if (!queuedMessage || queuedMessage.status !== "pending") {
+          throw new Error(`Pi SDK queued message "${queuedMessageId}" was not found.`);
+        }
+
+        const pending = pendingQueuedMessages();
+        const followDisplay = [
+          ...(session.getFollowUpMessages?.() ?? pending.map((item) => item.piText ?? item.body)),
+        ];
+        const followStart = suffixStart(
+          pending.map((item) => item.piText ?? item.body),
+          followDisplay,
+        );
+        if (followStart === null) {
+          throw new Error(
+            `Pi SDK queued message "${queuedMessageId}" was not present in the follow-up queue.`,
+          );
+        }
+        const remaining = pending.slice(followStart);
+        if (!remaining.some((item) => item.id === queuedMessageId)) {
+          for (const message of pending.slice(0, followStart)) {
+            queuedMessages.set(message.id, {
+              ...message,
+              status: "processing",
+              processingStartedAt: now(),
+            });
+          }
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: "already processing",
+          };
+        }
+
+        const keep = pending.filter((item) => item.id !== queuedMessageId);
+        const extra: SteeringRecord = {
+          body: queuedMessage.body,
+          ...(queuedMessage.images?.length ? { images: queuedMessage.images } : {}),
+        };
+        const replayed = await replayQueue(keep, new Set([queuedMessageId]), [extra]);
+
+        if (replayed.drifted) {
+          throw new Error(
+            `Pi SDK queued message "${queuedMessageId}" was not present in the follow-up queue.`,
+          );
+        }
+
+        if (!replayed.extraOk) {
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: replayed.error ?? "steer failed",
+          };
+        }
+
+        queuedMessages.set(queuedMessage.id, {
+          ...(queuedMessages.get(queuedMessage.id) ?? queuedMessage),
+          status: "steered",
+          steeredAt: now(),
+        });
 
         if (!replayed.ok) {
           return {

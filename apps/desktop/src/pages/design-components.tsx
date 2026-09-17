@@ -1614,6 +1614,9 @@ function ChatQueuedMessageGallery() {
         <Variant caption="withdrawn">
           <ChatQueuedMessage body="An earlier follow-up." isWithdrawn />
         </Variant>
+        <Variant caption="steered">
+          <ChatQueuedMessage body="An earlier follow-up." isSteered />
+        </Variant>
         <Variant caption="dragging (45% opacity)">
           <ChatQueuedMessage
             body="Also add a regression test for the reconnect path."

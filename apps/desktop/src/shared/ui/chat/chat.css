@@ -1204,7 +1204,8 @@ details[open] > .chain-of-thought-rail__tool-row .chain-of-thought-rail__disclos
     opacity 150ms var(--ease-standard);
 }
 
-.chat-queued-message[data-withdrawn] .chat-queued-message__body {
+.chat-queued-message[data-withdrawn] .chat-queued-message__body,
+.chat-queued-message[data-steered] .chat-queued-message__body {
   color: var(--color-text-secondary);
 }
 

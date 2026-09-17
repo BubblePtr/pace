@@ -2394,6 +2394,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       expect(synced[1]).toHaveAttribute("data-withdrawn");
       expect(synced[2]).toHaveAttribute("data-withdrawn");
     });
+    expect(await screen.findByText("follow-up failed")).toBeInTheDocument();
   });
 
   it("syncs waiting-area order and statuses when reorder returns ok:false", async () => {
@@ -3535,8 +3536,8 @@ describe("AgentWorkspaceSessionsPage", () => {
           sessionListeners.delete(listener);
         };
       },
-      async steerRun(input) {
-        const steered = await bridge.steerRun(input);
+      async steerFromQueue(input) {
+        const steered = await bridge.steerFromQueue(input);
 
         await new Promise<void>((resolve) => {
           releaseSteer = resolve;
@@ -4194,9 +4195,20 @@ describe("AgentWorkspaceSessionsPage", () => {
 
   it("steers an active run as a Live Chat control event instead of a queued message", async () => {
     const user = userEvent.setup();
-    const bridge = createInMemoryPiRuntimeBridge({
+    const inner = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:10:00.000Z",
     });
+    const steerFromQueue = vi.fn((input: { piSessionId: string; queuedMessageId: string }) =>
+      inner.steerFromQueue(input),
+    );
+    const steerRun = vi.fn(inner.steerRun.bind(inner));
+    const withdrawQueuedMessage = vi.fn(inner.withdrawQueuedMessage.bind(inner));
+    const bridge = {
+      ...inner,
+      steerFromQueue,
+      steerRun,
+      withdrawQueuedMessage,
+    };
     let projection = applySessionProjectionEvent(
       createSessionProjection({
         id: "active-session",
@@ -4282,19 +4294,20 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
     );
 
-    expect(await within(liveChat).findByText("Steer")).toBeInTheDocument();
-    expect(
-      within(liveChat).getByText("Avoid changing the archive model."),
-    ).toBeInTheDocument();
-    // The promoted message leaves the pending queue (kept as a withdrawn row).
-    expect(
-      await within(pendingQueue).findByText("Withdrawn"),
-    ).toBeInTheDocument();
+    expect(steerFromQueue).toHaveBeenCalledTimes(1);
+    expect(steerRun).not.toHaveBeenCalled();
+    expect(withdrawQueuedMessage).not.toHaveBeenCalled();
+    expect(await within(pendingQueue).findByText("Steered")).toBeInTheDocument();
+    expect(within(pendingQueue).queryByText("Withdrawn")).not.toBeInTheDocument();
     expect(
       within(pendingQueue).queryByRole("button", {
         name: "Steer the run with this message",
       }),
     ).not.toBeInTheDocument();
+    expect(await within(liveChat).findByText("Steer")).toBeInTheDocument();
+    expect(
+      within(liveChat).getByText("Avoid changing the archive model."),
+    ).toBeInTheDocument();
   });
 
   it("keeps steer text editable and shows a recoverable error when steer fails", async () => {
@@ -4337,9 +4350,9 @@ describe("AgentWorkspaceSessionsPage", () => {
       events: projection.runtimeEvents,
       updatedAt: projection.updatedAt,
     });
-    bridge.steerRun = vi.fn().mockRejectedValue(
+    bridge.steerFromQueue = vi.fn().mockRejectedValue(
       new PiRuntimeBridgeError({
-        stage: "steering run",
+        stage: "steering queued message",
         message: "Pi rejected steer input.",
       }),
     );
@@ -4387,6 +4400,127 @@ describe("AgentWorkspaceSessionsPage", () => {
     // A failed steer surfaces the error and leaves the row queued and steerable.
     expect(await screen.findByText("Pi rejected steer input.")).toBeInTheDocument();
     expect(within(pendingQueue).getByText("Keep this steer text")).toBeInTheDocument();
+    expect(
+      within(pendingQueue).getByRole("button", {
+        name: "Steer the run with this message",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders Steered when the target was already processing before steer_from_queue returns", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const eventListeners = new Map<string, Set<(event: PiRuntimeEvent) => void>>();
+    let releaseSteer: (() => void) | null = null;
+    const bridge = {
+      ...inner,
+      subscribeToEvents(piSessionId: string, listener: (event: PiRuntimeEvent) => void) {
+        const sessionListeners = eventListeners.get(piSessionId) ?? new Set();
+        sessionListeners.add(listener);
+        eventListeners.set(piSessionId, sessionListeners);
+        const unsubscribe = inner.subscribeToEvents(piSessionId, listener);
+        return () => {
+          sessionListeners.delete(listener);
+          unsubscribe();
+        };
+      },
+      async steerFromQueue(input: { piSessionId: string; queuedMessageId: string }) {
+        await new Promise<void>((resolve) => {
+          releaseSteer = resolve;
+        });
+        return {
+          ok: true as const,
+          queuedMessages: [
+            {
+              id: input.queuedMessageId,
+              piSessionId: input.piSessionId,
+              body: "Promote B",
+              status: "steered" as const,
+              createdAt: "2026-06-26T08:10:00.000Z",
+              steeredAt: "2026-06-26T08:10:02.000Z",
+            },
+          ],
+        };
+      },
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Promote B");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    await user.click(
+      within(pendingQueue).getByRole("button", {
+        name: "Steer the run with this message",
+      }),
+    );
+    await waitFor(() => expect(releaseSteer).not.toBeNull());
+
+    act(() => {
+      for (const listener of eventListeners.get("pi-session-active") ?? []) {
+        listener({
+          id: "runtime-event-consume-b",
+          piSessionId: "pi-session-active",
+          kind: "message",
+          role: "user",
+          body: "Promote B",
+          timestamp: "2026-06-26T08:10:01.000Z",
+        });
+      }
+    });
+    await waitFor(() =>
+      expect(
+        within(pendingQueue).queryByRole("button", {
+          name: "Steer the run with this message",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      releaseSteer?.();
+    });
+
+    expect(await within(pendingQueue).findByText("Steered")).toBeInTheDocument();
+  });
+
+  it("syncs the waiting-area and shows the error when steer_from_queue returns ok:false", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const bridge = {
+      ...inner,
+      steerFromQueue: async (input: { piSessionId: string; queuedMessageId: string }) => ({
+        ok: false as const,
+        error: "steer failed",
+        queuedMessages: [
+          {
+            id: input.queuedMessageId,
+            piSessionId: input.piSessionId,
+            body: "Back in the follow-up queue",
+            status: "pending" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+          },
+        ],
+      }),
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(
+      screen.getByPlaceholderText("Queue the next task…"),
+      "Back in the follow-up queue",
+    );
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    await user.click(
+      within(pendingQueue).getByRole("button", {
+        name: "Steer the run with this message",
+      }),
+    );
+
+    expect(await screen.findByText("steer failed")).toBeInTheDocument();
+    expect(within(pendingQueue).queryByText("Steered")).not.toBeInTheDocument();
     expect(
       within(pendingQueue).getByRole("button", {
         name: "Steer the run with this message",

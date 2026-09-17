@@ -240,6 +240,60 @@ export function createInMemoryPiRuntimeBridge(
       };
     },
 
+    async steerFromQueue(input) {
+      const queuedMessage = queuedMessages.get(input.queuedMessageId);
+
+      if (!queuedMessage || queuedMessage.piSessionId !== input.piSessionId) {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
+          message: `Queued message "${input.queuedMessageId}" was not found.`,
+        });
+      }
+
+      if (queuedMessage.status !== "pending") {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
+          message: "Queued message can no longer be steered.",
+        });
+      }
+
+      const steeredMessage: PiQueuedMessage = {
+        ...queuedMessage,
+        status: "steered",
+        steeredAt: now(),
+      };
+
+      queuedMessages.set(steeredMessage.id, steeredMessage);
+
+      const state = states.get(input.piSessionId);
+      if (state) {
+        eventCounter += 1;
+        const event: PiRuntimeEvent = {
+          id: `runtime-event-${eventCounter}`,
+          piSessionId: input.piSessionId,
+          kind: "control",
+          role: "user",
+          title: "Steer",
+          body: queuedMessage.body,
+          ...(queuedMessage.images?.length ? { images: queuedMessage.images } : {}),
+          timestamp: now(),
+        };
+        state.status = "running";
+        state.updatedAt = event.timestamp;
+        state.events = [...state.events, event];
+        for (const listener of listeners.get(input.piSessionId) ?? []) {
+          listener({ ...event });
+        }
+      }
+
+      return {
+        ok: true as const,
+        queuedMessages: [...queuedMessages.values()]
+          .filter((message) => message.piSessionId === input.piSessionId)
+          .map((message) => ({ ...message })),
+      };
+    },
+
     async steerRun(input) {
       if (options.failAt === "steer-run") {
         fail("steering run");

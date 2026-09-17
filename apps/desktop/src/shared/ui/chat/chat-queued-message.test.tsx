@@ -60,6 +60,21 @@ describe("ChatQueuedMessage", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("renders the steered state without actions", () => {
+    render(
+      <ChatQueuedMessage
+        body="Promoted task"
+        isSteered
+        onSteer={() => {}}
+        onWithdraw={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Steered")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-steered", "");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("exposes list presence on the row so enter/exit can be CSS-driven", () => {
     render(
       <ChatQueuedMessage body="Queued task" presence="enter" onWithdraw={() => {}} />,

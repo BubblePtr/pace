@@ -523,6 +523,10 @@ function queuedMessageFromGateway(message: RuntimeGatewayQueuedMessage): PiQueue
     queued.withdrawnAt = message.withdrawnAt;
   }
 
+  if (message.steeredAt) {
+    queued.steeredAt = message.steeredAt;
+  }
+
   return queued;
 }
 
@@ -899,6 +903,31 @@ export function createRuntimeGatewayClient(
       } catch (error) {
         throw new PiRuntimeBridgeError({
           stage: "reordering queued messages",
+          message: errorMessage(error),
+        });
+      }
+    },
+
+    async steerFromQueue(input) {
+      try {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "steer_from_queue",
+          {
+            piSessionId: input.piSessionId,
+            queuedMessageId: input.queuedMessageId,
+          },
+        );
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
+      } catch (error) {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
           message: errorMessage(error),
         });
       }
