@@ -329,7 +329,7 @@ function PackageDetail({ pkg, onClose }: { pkg: Entry; onClose: () => void }) {
                   </Button>
                   <Button
                     label={`Remove ${pkg.title}`}
-                    variant="destructive"
+                    variant="ghost"
                     isDisabled={actions.pending}
                     onClick={() => {
                       if (

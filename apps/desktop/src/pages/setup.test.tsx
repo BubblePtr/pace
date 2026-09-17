@@ -66,7 +66,7 @@ describe("ConfigInventoryView", () => {
     render(<ConfigInventoryView inventory={incompleteInventory} selected="templates" />);
 
     expect(screen.getByText("Prompt Templates")).toBeInTheDocument();
-    expect(screen.getByText("No resources loaded")).toBeInTheDocument();
+    expect(screen.getByText("No resources loaded yet")).toBeInTheDocument();
   });
 
   it("uses English labels for missing model defaults", () => {
@@ -189,11 +189,16 @@ it("disables terminal themes and CLI bare packages, and confirms drop-in deletio
   const client = new QueryClient();
   const { rerender } = render(<QueryClientProvider client={client}><ResourceManagement inventory={data} selected="themes" /></QueryClientProvider>);
   expect(screen.getByRole("switch", { name: "Enable night" })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("tooltip", { hidden: true })).toHaveTextContent("Only affects the Pi terminal");
   fireEvent.click(screen.getByRole("switch", { name: "Enable night" }));
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command !== "check_package_updates")).toHaveLength(0);
   rerender(<QueryClientProvider client={client}><ResourceManagement inventory={data} selected="extensions" /></QueryClientProvider>);
   const switches = screen.getAllByRole("switch", { name: "Enable terminal-tools" });
   expect(switches[0]).toHaveAttribute("aria-disabled", "true");
+  expect(switches[1]).not.toHaveAttribute("aria-disabled", "true");
+  expect(screen.getAllByRole("tooltip", { hidden: true }).map(tooltip => tooltip.textContent)).toContain(
+    "Pi ignores Resource Filter toggles for local file or bare-directory packages. Remove the registration or move the resource into a convention directory.",
+  );
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   fireEvent.click(screen.getByRole("button", { name: "Delete drop" }));
   expect(vi.mocked(invoke).mock.calls.filter(([command]) => command !== "check_package_updates")).toHaveLength(0);
