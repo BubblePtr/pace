@@ -191,6 +191,7 @@ export function createSessionProcessDriver(options: SessionProcessDriverOptions)
     sendPrompt: async input => processFor(input.piSessionId).call("sendPrompt", [input]),
     queueFollowUp: async input => processFor(input.piSessionId).call("queueFollowUp", [input]),
     withdrawQueuedMessage: async input => processFor(input.piSessionId).call("withdrawQueuedMessage", [input]),
+    reorderQueuedMessages: async input => processFor(input.piSessionId).call("reorderQueuedMessages", [input]),
     steerRun: async input => processFor(input.piSessionId).call("steerRun", [input]),
     stopRun: async input => processFor(input.piSessionId).call("stopRun", [input]),
     sendSubagent: async input => processFor(input.piSessionId).call("sendSubagent", [input]),

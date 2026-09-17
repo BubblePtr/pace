@@ -17,6 +17,7 @@ import {
 import type {
   RuntimeContextUsage,
   RuntimeGatewayQueuedMessage,
+  RuntimeGatewayQueueMutationResult,
   RuntimeModelCapability,
   RuntimeModelControls,
   RuntimeModelSelection,
@@ -821,6 +822,44 @@ function piImagesFromPrompt(images?: RuntimePromptImage[]) {
   return images?.length ? images.map(toPiImageContent) : undefined;
 }
 
+function suffixStart(pending: string[], actual: string[]): number | null {
+  if (actual.length > pending.length) {
+    return null;
+  }
+
+  const start = pending.length - actual.length;
+  for (let i = 0; i < actual.length; i += 1) {
+    if (pending[start + i] !== actual[i]) {
+      return null;
+    }
+  }
+  return start;
+}
+
+function readBackEnqueue(
+  before: readonly string[],
+  after: readonly string[] | undefined,
+  fallback: string,
+): { kind: "pending"; piText: string } | { kind: "consumed" } {
+  const next = after ?? [];
+  if (next.length === 0) {
+    return { kind: "consumed" };
+  }
+  const consumedCount = before.length + 1 - next.length;
+  if (consumedCount < 0) {
+    return { kind: "pending", piText: fallback };
+  }
+  const piText = next[next.length - 1]!;
+  const expected = [...before.slice(consumedCount), piText];
+  if (
+    expected.length !== next.length ||
+    expected.some((value, index) => value !== next[index])
+  ) {
+    return { kind: "pending", piText: fallback };
+  }
+  return { kind: "pending", piText };
+}
+
 function childSessionIdFromSessionFileHeader(sessionFile: string): string | undefined {
   try {
     const line = readFileSync(sessionFile, "utf8").split(/\r?\n/, 1)[0];
@@ -863,7 +902,6 @@ async function createPublicPiSdkRuntime(context: {
     let promptCompleted = false;
     let stopped = false;
     let queuedSequence = 0;
-    const queuedMessages = new Map<string, RuntimeGatewayQueuedMessage>();
     const listeners = new Set<(event: PiSdkRuntimeEvent) => void>();
     const pendingEvents: PiSdkRuntimeEvent[] = [];
     let disposed = false;
@@ -1077,103 +1115,353 @@ async function createPublicPiSdkRuntime(context: {
       },
     };
 
+    type LocalQueued = RuntimeGatewayQueuedMessage & { piText?: string };
+    type SteeringRecord = {
+      body: string;
+      piText?: string;
+      images?: RuntimePromptImage[];
+    };
+    const queuedMessages = new Map<string, LocalQueued>();
+    const steeringRecords: SteeringRecord[] = [];
+    // One lock for this session: clear+replay must not interleave with
+    // another queue write, or Pi would consume a half-rebuilt FIFO.
+    let queueWrite: Promise<unknown> = Promise.resolve();
+    const withQueueWrite = <T>(fn: () => Promise<T>): Promise<T> => {
+      const run = queueWrite.then(fn, fn);
+      queueWrite = run.then(() => undefined, () => undefined);
+      return run;
+    };
+    const pendingQueuedMessages = () =>
+      [...queuedMessages.values()].filter((item) => item.status === "pending");
+    const publicQueued = (message: LocalQueued): RuntimeGatewayQueuedMessage => {
+      const { piText: _piText, ...published } = message;
+      return published;
+    };
+    const sendFollowUp = async (body: string, images?: RuntimePromptImage[]) => {
+      const piImages = piImagesFromPrompt(images);
+      if (piImages) {
+        await session.followUp?.(body, piImages);
+      } else {
+        await session.followUp?.(body);
+      }
+    };
+    const sendSteer = async (body: string, images?: RuntimePromptImage[]) => {
+      const piImages = piImagesFromPrompt(images);
+      if (piImages) {
+        await session.steer?.(body, piImages);
+      } else {
+        await session.steer?.(body);
+      }
+    };
+    const captureFollowUpText = async (body: string, images?: RuntimePromptImage[]) => {
+      if (!session.getFollowUpMessages) {
+        await sendFollowUp(body, images);
+        return { kind: "pending" as const, piText: body };
+      }
+      const before = [...session.getFollowUpMessages()];
+      await sendFollowUp(body, images);
+      return readBackEnqueue(before, session.getFollowUpMessages(), body);
+    };
+    const captureSteerText = async (body: string, images?: RuntimePromptImage[]) => {
+      if (!session.getSteeringMessages) {
+        await sendSteer(body, images);
+        return { kind: "pending" as const, piText: body };
+      }
+      const before = [...session.getSteeringMessages()];
+      await sendSteer(body, images);
+      return readBackEnqueue(before, session.getSteeringMessages(), body);
+    };
+    const adoptPendingOrder = (order: LocalQueued[]) => {
+      for (const message of order) {
+        queuedMessages.delete(message.id);
+      }
+      for (const message of order) {
+        queuedMessages.set(message.id, message);
+      }
+    };
+    const publishedQueue = (): RuntimeGatewayQueuedMessage[] =>
+      [...queuedMessages.values()].map(publicQueued);
+    const replayQueue = async (keep: LocalQueued[], omittedIds: ReadonlySet<string> = new Set()) => {
+      // Pi follow-up mode `all` drains the whole queue into the agent loop at
+      // once while the display list shrinks per message_start; a reorder in
+      // that window would re-enqueue already-drained messages. Default mode
+      // is one-at-a-time.
+      const pending = pendingQueuedMessages();
+      const followDisplay = [
+        ...(session.getFollowUpMessages?.() ?? pending.map((item) => item.piText ?? item.body)),
+      ];
+      const steerDisplay = [
+        ...(session.getSteeringMessages?.() ??
+          steeringRecords.map((item) => item.piText ?? item.body)),
+      ];
+      const followStart = suffixStart(
+        pending.map((item) => item.piText ?? item.body),
+        followDisplay,
+      );
+      const steerStart = suffixStart(
+        steeringRecords.map((item) => item.piText ?? item.body),
+        steerDisplay,
+      );
+
+      if (followStart === null || steerStart === null) {
+        return { drifted: true as const };
+      }
+
+      const remaining = pending.slice(followStart);
+      const nextKeep = keep.filter((item) => remaining.some((entry) => entry.id === item.id));
+      if (
+        remaining.some(
+          (item) => !nextKeep.some((entry) => entry.id === item.id) && !omittedIds.has(item.id),
+        )
+      ) {
+        throw new Error("Queued message order must list each pending follow-up exactly once.");
+      }
+
+      const consumed = pending.slice(0, followStart);
+      for (const message of consumed) {
+        queuedMessages.set(message.id, {
+          ...message,
+          status: "processing",
+          processingStartedAt: now(),
+        });
+      }
+      steeringRecords.splice(0, steerStart);
+      const remainingSteering = [...steeringRecords];
+      session.clearQueue?.();
+
+      const inPi: LocalQueued[] = [];
+      const failed: LocalQueued[] = [];
+      let error: string | undefined;
+      const attemptFollowUp = async (message: LocalQueued) => {
+        try {
+          const captured = await captureFollowUpText(message.body, message.images);
+          if (captured.kind === "consumed") {
+            message.status = "processing";
+            message.processingStartedAt = now();
+          } else {
+            message.status = "pending";
+            message.piText = captured.piText;
+            delete message.withdrawnAt;
+          }
+          if (!inPi.some((entry) => entry.id === message.id)) {
+            inPi.push(message);
+          }
+        } catch (caught) {
+          error = error ?? (caught instanceof Error ? caught.message : String(caught));
+          message.status = "withdrawn";
+          message.withdrawnAt = now();
+          if (!failed.some((entry) => entry.id === message.id)) {
+            failed.push(message);
+          }
+        }
+        queuedMessages.set(message.id, message);
+      };
+      const attemptSteer = async (entry: SteeringRecord) => {
+        try {
+          const captured = await captureSteerText(entry.body, entry.images);
+          if (captured.kind === "pending") {
+            entry.piText = captured.piText;
+            return "queued" as const;
+          }
+          return "consumed" as const;
+        } catch (caught) {
+          error = error ?? (caught instanceof Error ? caught.message : String(caught));
+          return "failed" as const;
+        }
+      };
+
+      const keptSteering: SteeringRecord[] = [];
+      const finishedSteering = new Set<SteeringRecord>();
+      for (const entry of remainingSteering) {
+        const outcome = await attemptSteer(entry);
+        if (outcome === "queued") {
+          keptSteering.push(entry);
+        }
+        if (outcome === "failed") {
+          break;
+        }
+        finishedSteering.add(entry);
+      }
+      if (error) {
+        for (const entry of remainingSteering.filter((item) => !finishedSteering.has(item))) {
+          const outcome = await attemptSteer(entry);
+          if (outcome === "queued") {
+            keptSteering.push(entry);
+          }
+        }
+      }
+      steeringRecords.length = 0;
+      steeringRecords.push(...keptSteering);
+
+      for (const message of nextKeep) {
+        await attemptFollowUp(message);
+        if (error) {
+          break;
+        }
+      }
+      if (error) {
+        const leftover = remaining.filter(
+          (item) =>
+            !inPi.some((entry) => entry.id === item.id) && !omittedIds.has(item.id),
+        );
+        for (const message of leftover) {
+          await attemptFollowUp(message);
+        }
+        adoptPendingOrder([...inPi, ...failed.filter((item) => item.status === "withdrawn")]);
+        return { drifted: false as const, ok: false as const, error };
+      }
+
+      adoptPendingOrder(nextKeep);
+      return { drifted: false as const, ok: true as const };
+    };
+
     if (session.followUp) {
-      runtime.queueFollowUp = async (message, images) => {
+      runtime.queueFollowUp = (message, images) => withQueueWrite(async () => {
         assertOpen();
-        const queuedMessage = {
+        const queuedMessage: LocalQueued = {
           id: `pi-sdk:${session.sessionId}:queued:${queuedSequence}`,
           piSessionId: session.sessionId,
           body: message,
           ...(images?.length ? { images } : {}),
-          status: "pending" as const,
+          status: "pending",
           createdAt: now(),
         };
-        const piImages = piImagesFromPrompt(images);
-
         queuedSequence += 1;
         normalizer.noteRunTrigger("follow_up");
 
-        if (piImages) {
-          await session.followUp?.(message, piImages);
+        const captured = await captureFollowUpText(message, images);
+        if (captured.kind === "consumed") {
+          queuedMessage.status = "processing";
+          queuedMessage.processingStartedAt = now();
         } else {
-          await session.followUp?.(message);
+          queuedMessage.piText = captured.piText;
         }
-
         queuedMessages.set(queuedMessage.id, queuedMessage);
 
-        return queuedMessage;
-      };
+        return publicQueued(queuedMessage);
+      });
     }
 
     if (session.clearQueue && session.followUp && session.steer) {
-      runtime.withdrawQueuedMessage = async (queuedMessageId) => {
+      runtime.withdrawQueuedMessage = (queuedMessageId) => withQueueWrite(async () => {
         assertOpen();
         const queuedMessage = queuedMessages.get(queuedMessageId);
 
-        if (!queuedMessage) {
+        if (!queuedMessage || queuedMessage.status !== "pending") {
           throw new Error(`Pi SDK queued message "${queuedMessageId}" was not found.`);
         }
 
-        const cleared = session.clearQueue?.() ?? {
-          steering: [],
-          followUp: [],
-        };
-        let removedFollowUp = false;
-
-        for (const steering of cleared.steering) {
-          await session.steer?.(steering);
-        }
-
-        for (const followUp of cleared.followUp) {
-          if (!removedFollowUp && followUp === queuedMessage.body) {
-            removedFollowUp = true;
-            continue;
-          }
-
-          const stored = [...queuedMessages.values()].find(
-            (item) =>
-              item.status === "pending" &&
-              item.id !== queuedMessageId &&
-              item.body === followUp,
+        const pending = pendingQueuedMessages();
+        const followDisplay = [
+          ...(session.getFollowUpMessages?.() ?? pending.map((item) => item.piText ?? item.body)),
+        ];
+        const followStart = suffixStart(
+          pending.map((item) => item.piText ?? item.body),
+          followDisplay,
+        );
+        if (followStart === null) {
+          throw new Error(
+            `Pi SDK queued message "${queuedMessageId}" was not present in the follow-up queue.`,
           );
-          const piImages = piImagesFromPrompt(stored?.images);
-
-          if (piImages) {
-            await session.followUp?.(followUp, piImages);
-          } else {
-            await session.followUp?.(followUp);
+        }
+        const remaining = pending.slice(followStart);
+        if (!remaining.some((item) => item.id === queuedMessageId)) {
+          for (const message of pending.slice(0, followStart)) {
+            queuedMessages.set(message.id, {
+              ...message,
+              status: "processing",
+              processingStartedAt: now(),
+            });
           }
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: "already processing",
+          };
         }
 
-        if (!removedFollowUp) {
+        const keep = pending.filter((item) => item.id !== queuedMessageId);
+        const replayed = await replayQueue(keep, new Set([queuedMessageId]));
+
+        if (replayed.drifted) {
           throw new Error(
             `Pi SDK queued message "${queuedMessageId}" was not present in the follow-up queue.`,
           );
         }
 
-        const withdrawn = {
+        const withdrawn: LocalQueued = {
           ...queuedMessage,
-          status: "withdrawn" as const,
+          status: "withdrawn",
           withdrawnAt: now(),
         };
-
         queuedMessages.set(queuedMessage.id, withdrawn);
 
-        return withdrawn;
-      };
+        if (!replayed.ok) {
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: replayed.error,
+          };
+        }
+
+        return {
+          ok: true,
+          queuedMessages: publishedQueue(),
+        };
+      });
+
+      runtime.reorderQueuedMessages = (orderedIds) => withQueueWrite(async (): Promise<RuntimeGatewayQueueMutationResult> => {
+        assertOpen();
+        if (new Set(orderedIds).size !== orderedIds.length) {
+          throw new Error("Queued message order must list each pending follow-up exactly once.");
+        }
+
+        const keep: LocalQueued[] = [];
+        for (const id of orderedIds) {
+          const message = queuedMessages.get(id);
+          if (!message || message.status === "withdrawn") {
+            throw new Error(`Pi SDK queued message "${id}" was not found.`);
+          }
+          if (message.status === "processing") {
+            continue;
+          }
+          keep.push(message);
+        }
+
+        const replayed = await replayQueue(keep);
+
+        if (replayed.drifted) {
+          throw new Error("Pi follow-up queue drifted during reorder.");
+        }
+
+        if (!replayed.ok) {
+          return {
+            ok: false,
+            queuedMessages: publishedQueue(),
+            error: replayed.error,
+          };
+        }
+
+        return {
+          ok: true,
+          queuedMessages: publishedQueue(),
+        };
+      });
     }
 
     if (session.steer) {
-      runtime.steerRun = async (message, images) => {
+      runtime.steerRun = (message, images) => withQueueWrite(async () => {
         assertOpen();
-        const piImages = piImagesFromPrompt(images);
-
-        if (piImages) {
-          await session.steer?.(message, piImages);
-        } else {
-          await session.steer?.(message);
+        const captured = await captureSteerText(message, images);
+        if (captured.kind === "consumed") {
+          return;
         }
-      };
+        steeringRecords.push({
+          body: message,
+          piText: captured.piText,
+          ...(images?.length ? { images } : {}),
+        });
+      });
     }
 
     const reportExtensionError = (code: string, path: string, detail: string) =>

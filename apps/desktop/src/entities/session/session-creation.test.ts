@@ -58,6 +58,7 @@ describe("Session Creation state machine", () => {
       },
       queueFollowUp: () => Promise.reject(new Error("unused")),
       withdrawQueuedMessage: () => Promise.reject(new Error("unused")),
+      reorderQueuedMessages: () => Promise.reject(new Error("unused")),
       steerRun: () => Promise.reject(new Error("unused")),
       abortRun: () => Promise.reject(new Error("unused")),
       getSessionState: () => Promise.reject(new Error("unused")),

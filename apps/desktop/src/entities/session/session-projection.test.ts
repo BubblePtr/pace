@@ -372,6 +372,179 @@ describe("Session Projection state", () => {
     );
   });
 
+  it("reorders queued messages and restores the previous order on rollback", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+    });
+    const withQueue = [
+      {
+        id: "queued-1",
+        piSessionId: "pi-session-active",
+        body: "First",
+        status: "pending" as const,
+        createdAt: "2026-06-26T08:01:00.000Z",
+      },
+      {
+        id: "queued-2",
+        piSessionId: "pi-session-active",
+        body: "Second",
+        status: "pending" as const,
+        createdAt: "2026-06-26T08:01:10.000Z",
+      },
+      {
+        id: "queued-3",
+        piSessionId: "pi-session-active",
+        body: "Third",
+        status: "pending" as const,
+        createdAt: "2026-06-26T08:01:30.000Z",
+      },
+    ].reduce(
+      (current, queuedMessage) =>
+        applySessionProjectionEvent(current, { type: "queued-message-added", queuedMessage }),
+      base,
+    );
+    const withdrawn = applySessionProjectionEvent(withQueue, {
+      type: "queued-message-withdrawn",
+      queuedMessageId: "queued-2",
+      occurredAt: "2026-06-26T08:01:20.000Z",
+    });
+    const previousIds = withdrawn.queuedMessages.map((queuedMessage) => queuedMessage.id);
+    const reordered = applySessionProjectionEvent(withdrawn, {
+      type: "queued-messages-reordered",
+      orderedIds: ["queued-3", "queued-2", "queued-1"],
+      occurredAt: "2026-06-26T08:02:00.000Z",
+    });
+    const rolledBack = applySessionProjectionEvent(reordered, {
+      type: "queued-messages-reordered",
+      orderedIds: previousIds,
+      occurredAt: "2026-06-26T08:02:05.000Z",
+    });
+
+    expect(reordered.queuedMessages.map((queuedMessage) => queuedMessage.id)).toEqual([
+      "queued-3",
+      "queued-2",
+      "queued-1",
+    ]);
+    expect(reordered.queuedMessages[1]).toMatchObject({ id: "queued-2", status: "withdrawn" });
+    expect(reordered.updatedAt).toBe("2026-06-26T08:02:00.000Z");
+    expect(rolledBack.queuedMessages.map((queuedMessage) => queuedMessage.id)).toEqual(previousIds);
+    expect(rolledBack.queuedMessages.map((queuedMessage) => queuedMessage.body)).toEqual([
+      "First",
+      "Second",
+      "Third",
+    ]);
+  });
+
+  it("replaces queued messages from a driver sync including statuses", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-1",
+          piSessionId: "pi-session-active",
+          body: "A",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:00.000Z",
+        },
+        {
+          id: "queued-2",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:10.000Z",
+        },
+        {
+          id: "queued-3",
+          piSessionId: "pi-session-active",
+          body: "C",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:20.000Z",
+        },
+      ],
+    });
+    const synced = applySessionProjectionEvent(base, {
+      type: "queued-messages-synced",
+      queuedMessages: [
+        {
+          id: "queued-3",
+          piSessionId: "pi-session-active",
+          body: "C",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:20.000Z",
+        },
+        {
+          id: "queued-1",
+          piSessionId: "pi-session-active",
+          body: "A",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:00.000Z",
+        },
+        {
+          id: "queued-2",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "withdrawn",
+          createdAt: "2026-06-26T08:01:10.000Z",
+          withdrawnAt: "2026-06-26T08:02:00.000Z",
+        },
+      ],
+      occurredAt: "2026-06-26T08:02:00.000Z",
+    });
+
+    expect(synced.queuedMessages.map((queuedMessage) => queuedMessage.body)).toEqual([
+      "C",
+      "A",
+      "B",
+    ]);
+    expect(synced.queuedMessages[2]).toMatchObject({ id: "queued-2", status: "withdrawn" });
+  });
+
+  it("does not regress a live processing status when the driver still reports pending", () => {
+    const base = projection({
+      id: "active-run",
+      status: "running",
+      piSessionId: "pi-session-active",
+      updatedAt: "2026-06-26T08:00:00.000Z",
+      queuedMessages: [
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "processing",
+          createdAt: "2026-06-26T08:01:00.000Z",
+          processingStartedAt: "2026-06-26T08:01:30.000Z",
+        },
+      ],
+    });
+    const synced = applySessionProjectionEvent(base, {
+      type: "queued-messages-synced",
+      queuedMessages: [
+        {
+          id: "queued-b",
+          piSessionId: "pi-session-active",
+          body: "B",
+          status: "pending",
+          createdAt: "2026-06-26T08:01:00.000Z",
+        },
+      ],
+      occurredAt: "2026-06-26T08:02:00.000Z",
+    });
+
+    expect(synced.queuedMessages).toEqual([
+      expect.objectContaining({
+        id: "queued-b",
+        status: "processing",
+        processingStartedAt: "2026-06-26T08:01:30.000Z",
+      }),
+    ]);
+  });
+
   it("promotes a matching queued follow-up when the runtime emits the user message", () => {
     const base = projection({
       id: "active-run",

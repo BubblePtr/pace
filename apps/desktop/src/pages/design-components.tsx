@@ -1614,6 +1614,27 @@ function ChatQueuedMessageGallery() {
         <Variant caption="withdrawn">
           <ChatQueuedMessage body="An earlier follow-up." isWithdrawn />
         </Variant>
+        <Variant caption="dragging (45% opacity)">
+          <ChatQueuedMessage
+            body="Also add a regression test for the reconnect path."
+            isDragging
+            onWithdraw={() => {}}
+          />
+        </Variant>
+        <Variant caption="drop target (top accent line)">
+          <ChatQueuedMessage
+            body="Also add a regression test for the reconnect path."
+            dropTarget="before"
+            onWithdraw={() => {}}
+          />
+        </Variant>
+        <Variant caption="drop target (bottom accent line)">
+          <ChatQueuedMessage
+            body="Also add a regression test for the reconnect path."
+            dropTarget="after"
+            onWithdraw={() => {}}
+          />
+        </Variant>
       </div>
     </GallerySection>
   );

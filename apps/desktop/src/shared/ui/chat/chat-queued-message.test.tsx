@@ -70,4 +70,25 @@ describe("ChatQueuedMessage", () => {
       "enter",
     );
   });
+
+  it("marks the dragging and drop-target states used by waiting-area reorder", () => {
+    const { rerender } = render(
+      <ChatQueuedMessage body="Queued task" isDragging onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-dragging");
+
+    rerender(
+      <ChatQueuedMessage body="Queued task" dropTarget="before" onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-drop-target", "before");
+    expect(screen.getByTestId("chat-queued-message")).not.toHaveAttribute("data-dragging");
+
+    rerender(
+      <ChatQueuedMessage body="Queued task" dropTarget="after" onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-drop-target", "after");
+  });
 });

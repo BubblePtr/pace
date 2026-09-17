@@ -120,12 +120,29 @@ function createFakeRuntimeDriver(): PiRuntimeDriver & {
     },
     async withdrawQueuedMessage(input) {
       return {
-        id: input.queuedMessageId,
-        piSessionId: input.piSessionId,
-        body: "queued",
-        status: "withdrawn",
-        createdAt: "2026-06-29T12:00:00.000Z",
-        withdrawnAt: "2026-06-29T12:00:00.000Z",
+        ok: true as const,
+        queuedMessages: [
+          {
+            id: input.queuedMessageId,
+            piSessionId: input.piSessionId,
+            body: "queued",
+            status: "withdrawn" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+            withdrawnAt: "2026-06-29T12:00:00.000Z",
+          },
+        ],
+      };
+    },
+    async reorderQueuedMessages(input) {
+      return {
+        ok: true as const,
+        queuedMessages: input.orderedIds.map((id, index) => ({
+          id,
+          piSessionId: input.piSessionId,
+          body: `queued-${index}`,
+          status: "pending" as const,
+          createdAt: "2026-06-29T12:00:00.000Z",
+        })),
       };
     },
     async steerRun(input) {

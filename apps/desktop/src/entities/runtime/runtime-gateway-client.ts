@@ -9,6 +9,7 @@ import type {
   RemovePackageResult,
   CheckPackageUpdatesResult,
   RuntimeGatewayEventEnvelope,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewayQueuedMessage,
   RuntimeGatewaySnapshot,
   RuntimeGatewaySummary,
@@ -855,19 +856,49 @@ export function createRuntimeGatewayClient(
 
     async withdrawQueuedMessage(input) {
       try {
-        const withdrawnMessage = queuedMessageFromGateway(
-          await invoke<RuntimeGatewayQueuedMessage>("withdraw_queued_message", {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "withdraw_queued_message",
+          {
             piSessionId: input.piSessionId,
             queuedMessageId: input.queuedMessageId,
-          }),
+          },
         );
-
-        queuedMessages.set(withdrawnMessage.id, withdrawnMessage);
-
-        return cloneQueuedMessage(withdrawnMessage);
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
       } catch (error) {
         throw new PiRuntimeBridgeError({
           stage: "withdrawing queued message",
+          message: errorMessage(error),
+        });
+      }
+    },
+
+    async reorderQueuedMessages(input) {
+      try {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "reorder_queued_messages",
+          {
+            piSessionId: input.piSessionId,
+            orderedIds: input.orderedIds,
+          },
+        );
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
+      } catch (error) {
+        throw new PiRuntimeBridgeError({
+          stage: "reordering queued messages",
           message: errorMessage(error),
         });
       }

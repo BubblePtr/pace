@@ -50,7 +50,7 @@
 | 图表原语扩展(面积/日历热力/会话表) | [#87](https://github.com/BubblePtr/pace/issues/87) | 折线与星期×小时热力已随 Usage 重构落地；其余等需求驱动 |
 | Dynamic workflow visualization(图/DAG/时间线) | [#84](https://github.com/BubblePtr/pace/issues/84) | **future,远期**(2026-08-09 降级) |
 | 思维链样式可选项(Compact/Timeline) | [#81](https://github.com/BubblePtr/pace/issues/81) | **future,后置**(被 Appearance 设置页阻塞) |
-| Composer 队列拖拽重排 | [#97](https://github.com/BubblePtr/pace/issues/97) | 被 runtime gateway reorder 能力阻塞 |
+| Composer 队列拖拽重排 | [#97](https://github.com/BubblePtr/pace/issues/97) | 已落地：clear + replay 按 Pace 消息 id 重放；等待区整卡拖拽 |
 | 设置弹窗可见模型管理(Add Models 落点) | [#102](https://github.com/BubblePtr/pace/issues/102) | 已落地；Add Models 在当前工作区打开 Settings 的 Models 分类，偏好沿用 localStorage |
 
 ## 备注:context-usage-meter 的数据链路(#101)

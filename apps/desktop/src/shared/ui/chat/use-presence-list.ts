@@ -27,48 +27,36 @@ function mergePresence<T>(
   reduceMotion: boolean,
 ): PresenceRecord<T>[] {
   const liveByKey = new Map(items.map((item) => [getKey(item), item]));
-  const merged: PresenceRecord<T>[] = [];
-  const placed = new Set<string>();
-
-  for (const record of previous) {
-    const live = liveByKey.get(record.key);
-
-    if (live) {
-      merged.push({
-        item: live,
-        key: record.key,
-        // Re-adding an exiting row cancels the exit rather than replaying enter.
-        motion: record.motion === "exit" ? "none" : record.motion,
-      });
-      placed.add(record.key);
-      continue;
-    }
-
-    if (reduceMotion) {
-      continue;
-    }
-
-    merged.push({
-      item: record.item,
-      key: record.key,
-      motion: "exit",
-    });
-    placed.add(record.key);
-  }
-
-  for (const item of items) {
+  const previousByKey = new Map(previous.map((record) => [record.key, record]));
+  const merged: PresenceRecord<T>[] = items.map((item) => {
     const key = getKey(item);
+    const previousRecord = previousByKey.get(key);
 
-    if (placed.has(key)) {
-      continue;
-    }
-
-    merged.push({
+    return {
       item,
       key,
-      motion: isFirst || reduceMotion ? "none" : "enter",
-    });
-    placed.add(key);
+      motion: !previousRecord
+        ? isFirst || reduceMotion
+          ? "none"
+          : "enter"
+        : previousRecord.motion === "exit"
+          ? "none"
+          : previousRecord.motion,
+    };
+  });
+
+  if (!reduceMotion) {
+    for (let index = 0; index < previous.length; index += 1) {
+      const record = previous[index];
+      if (liveByKey.has(record.key)) {
+        continue;
+      }
+      merged.splice(Math.min(index, merged.length), 0, {
+        item: record.item,
+        key: record.key,
+        motion: "exit",
+      });
+    }
   }
 
   return merged;

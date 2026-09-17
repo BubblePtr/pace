@@ -138,6 +138,17 @@ export type RuntimeGatewayQueuedMessage = {
   withdrawnAt?: string;
 };
 
+export type RuntimeGatewayQueueMutationResult =
+  | {
+      ok: true;
+      queuedMessages: RuntimeGatewayQueuedMessage[];
+    }
+  | {
+      ok: false;
+      queuedMessages: RuntimeGatewayQueuedMessage[];
+      error: string;
+    };
+
 export type RuntimeGatewaySequencerOptions = {
   now?: () => string;
   idFactory?: () => string;

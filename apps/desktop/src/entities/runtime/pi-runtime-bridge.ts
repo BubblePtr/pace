@@ -48,6 +48,7 @@ export type RuntimeBridgeFailureStage =
   | "forking session"
   | "queuing message"
   | "withdrawing queued message"
+  | "reordering queued messages"
   | "steering run"
   | "stopping run"
   | "configuring model";
@@ -188,6 +189,22 @@ export type WithdrawQueuedMessageInput = {
   queuedMessageId: string;
 };
 
+export type ReorderQueuedMessagesInput = {
+  piSessionId: string;
+  orderedIds: string[];
+};
+
+export type ReorderQueuedMessagesResult =
+  | {
+      ok: true;
+      queuedMessages: PiQueuedMessage[];
+    }
+  | {
+      ok: false;
+      queuedMessages: PiQueuedMessage[];
+      error: string;
+    };
+
 export type SteerRunInput = {
   piSessionId: string;
   message: string;
@@ -240,7 +257,8 @@ export type PiRuntimeBridge = {
   createPiSessionState(input: CreatePiSessionStateInput): Promise<PiSessionState>;
   sendInitialPrompt(input: SendInitialPromptInput): Promise<PiRuntimeAcceptedPrompt>;
   queueFollowUp(input: QueueFollowUpInput): Promise<PiQueuedMessage>;
-  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<PiQueuedMessage>;
+  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<ReorderQueuedMessagesResult>;
+  reorderQueuedMessages(input: ReorderQueuedMessagesInput): Promise<ReorderQueuedMessagesResult>;
   steerRun(input: SteerRunInput): Promise<PiRuntimeEvent>;
   abortRun(input: AbortRunInput): Promise<PiRuntimeEvent>;
   configureModel?(input: ConfigureModelInput): Promise<RuntimeModelControls>;

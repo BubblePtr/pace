@@ -4,6 +4,7 @@ import type {
   RuntimeGatewayEventEnvelope,
   RuntimeGatewayEventInput,
   RuntimeGatewayQueuedMessage,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewayRequest,
   RuntimeGatewayResponse,
   RuntimeGatewaySnapshot,
@@ -83,6 +84,11 @@ export type WithdrawQueuedMessageInput = {
   queuedMessageId: string;
 };
 
+export type ReorderQueuedMessagesInput = {
+  piSessionId: string;
+  orderedIds: string[];
+};
+
 export type SteerRunInput = {
   piSessionId: string;
   message: string;
@@ -122,7 +128,8 @@ export type PiRuntimeDriver = {
   forkSession(input: ForkRuntimeSessionInput): Promise<ForkRuntimeSessionResult>;
   sendPrompt(input: SendPromptInput): Promise<RuntimeGatewayDriverEvent>;
   queueFollowUp(input: QueueFollowUpInput): Promise<RuntimeGatewayQueuedMessage>;
-  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<RuntimeGatewayQueuedMessage>;
+  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<RuntimeGatewayQueueMutationResult>;
+  reorderQueuedMessages(input: ReorderQueuedMessagesInput): Promise<RuntimeGatewayQueueMutationResult>;
   steerRun(input: SteerRunInput): Promise<RuntimeGatewayDriverEvent>;
   stopRun(input: StopRunInput): Promise<RuntimeGatewayDriverEvent>;
   sendSubagent?(input: SendSubagentInput): Promise<{ ok: true }>;
@@ -560,6 +567,11 @@ async function dispatchRuntimeGatewayRequest(input: {
       return input.driver.withdrawQueuedMessage({
         piSessionId: requiredString(params.piSessionId, "piSessionId"),
         queuedMessageId: requiredString(params.queuedMessageId, "queuedMessageId"),
+      });
+    case "reorder_queued_messages":
+      return input.driver.reorderQueuedMessages({
+        piSessionId: requiredString(params.piSessionId, "piSessionId"),
+        orderedIds: requiredStringArray(params.orderedIds, "orderedIds"),
       });
     case "steer_run": {
       const submittedAt = input.now();

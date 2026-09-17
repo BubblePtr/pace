@@ -2179,6 +2179,402 @@ describe("AgentWorkspaceSessionsPage", () => {
     expect(await within(pendingQueue).findByText("Withdrawn")).toBeInTheDocument();
   });
 
+  function dataTransferStub() {
+    return {
+      dropEffect: "move",
+      effectAllowed: "all",
+      setData() {},
+      getData() {
+        return "";
+      },
+    };
+  }
+
+  function fireCardDrag(
+    type: "dragstart" | "dragover" | "drop" | "dragend",
+    element: HTMLElement,
+    dataTransfer: ReturnType<typeof dataTransferStub>,
+    clientY = 0,
+  ) {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: 10,
+      clientY,
+    });
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+    fireEvent(element, event);
+  }
+
+  function dragQueuedCard(
+    source: HTMLElement,
+    target: HTMLElement,
+    edge: "before" | "after" = "before",
+  ) {
+    const dataTransfer = dataTransferStub();
+    target.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: 40,
+        right: 100,
+        width: 100,
+        height: 40,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+    const clientY = edge === "before" ? 5 : 35;
+    fireCardDrag("dragstart", source, dataTransfer);
+    fireCardDrag("dragover", target, dataTransfer, clientY);
+    fireCardDrag("drop", target, dataTransfer, clientY);
+    fireCardDrag("dragend", source, dataTransfer);
+  }
+
+  async function renderRunningQueue(
+    bridge: PiRuntimeBridge & Pick<InMemoryPiRuntimeBridge, "restoreSessionState">,
+  ) {
+    let projection = applySessionProjectionEvent(
+      createSessionProjection({
+        id: "active-session",
+        projectId: "pig-docs",
+        initialPrompt: "Keep working on the live run",
+        createdAt: "2026-06-26T08:00:00.000Z",
+      }),
+      {
+        type: "runtime-bound",
+        stage: "starting runtime",
+        runtimeId: "runtime-active",
+        piSessionId: "pi-session-active",
+        occurredAt: "2026-06-26T08:00:01.000Z",
+      },
+    );
+    projection = applySessionProjectionEvent(projection, {
+      type: "runtime-event-received",
+      stage: "accepted",
+      event: {
+        id: "runtime-event-active-user",
+        piSessionId: "pi-session-active",
+        kind: "message",
+        role: "user",
+        body: "Keep working on the live run",
+        timestamp: "2026-06-26T08:00:02.000Z",
+      },
+    });
+    await bridge.restoreSessionState({
+      piSessionId: "pi-session-active",
+      runtimeId: "runtime-active",
+      projectId: "pig-docs",
+      cwd: "/Users/void/code/opensource/Pig/docs",
+      status: "running",
+      events: projection.runtimeEvents,
+      updatedAt: projection.updatedAt,
+    });
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        runtimeBridge={bridge}
+        sessionProjection={projection}
+        workspace={{
+          id: "pig-docs",
+          name: "Pig Docs",
+          projectRoot: "/Users/void/code/opensource/Pig/docs",
+          repoRoot: "/Users/void/code/opensource/Pig",
+          selectedSessionId: "active-session",
+          liveMessages: [],
+          runTimeline: [],
+          checkout: {
+            mode: "Foreground local checkout",
+            root: "/Users/void/code/opensource/Pig",
+            runtimeCwd: "/Users/void/code/opensource/Pig/docs",
+          },
+          summary: { model: "gpt-5-codex", totalCostUsd: 0, totalTokens: 0 },
+        }}
+      />,
+    );
+  }
+
+  it("reorders pending waiting-area cards by dragging and leaves withdrawn cards in place", async () => {
+    const user = userEvent.setup();
+    const bridge = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    expect(cards[0]).toHaveTextContent("First follow-up");
+    expect(cards[1]).toHaveTextContent("Second follow-up");
+    expect(cards[0]).toHaveAttribute("draggable", "true");
+
+    dragQueuedCard(cards[1], cards[0]);
+
+    await waitFor(() => {
+      const reordered = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(reordered[0]).toHaveTextContent("Second follow-up");
+      expect(reordered[1]).toHaveTextContent("First follow-up");
+    });
+
+    await user.click(
+      within(pendingQueue).getAllByRole("button", { name: "Withdraw queued message" })[0]!,
+    );
+    expect(await within(pendingQueue).findByText("Withdrawn")).toBeInTheDocument();
+    const afterWithdraw = within(pendingQueue).getAllByTestId("chat-queued-message");
+    expect(afterWithdraw.find((card) => card.hasAttribute("data-withdrawn"))).not.toHaveAttribute(
+      "draggable",
+      "true",
+    );
+  });
+
+  it("syncs waiting-area statuses when withdraw returns ok:false", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const bridge = {
+      ...inner,
+      withdrawQueuedMessage: async () => ({
+        ok: false as const,
+        error: "follow-up failed",
+        queuedMessages: [
+          {
+            id: "queued-c",
+            piSessionId: "pi-session-active",
+            body: "C",
+            status: "pending" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+          },
+          {
+            id: "queued-a",
+            piSessionId: "pi-session-active",
+            body: "A",
+            status: "withdrawn" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+            withdrawnAt: "2026-06-26T08:10:01.000Z",
+          },
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "withdrawn" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+            withdrawnAt: "2026-06-26T08:10:01.000Z",
+          },
+        ],
+      }),
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    await user.click(
+      within(pendingQueue).getAllByRole("button", { name: "Withdraw queued message" })[0]!,
+    );
+
+    await waitFor(() => {
+      const synced = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(synced.map((card) => card.textContent)).toEqual([
+        expect.stringContaining("C"),
+        expect.stringContaining("A"),
+        expect.stringContaining("B"),
+      ]);
+      expect(synced[1]).toHaveAttribute("data-withdrawn");
+      expect(synced[2]).toHaveAttribute("data-withdrawn");
+    });
+  });
+
+  it("syncs waiting-area order and statuses when reorder returns ok:false", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const bridge = {
+      ...inner,
+      reorderQueuedMessages: async () => ({
+        ok: false as const,
+        error: "follow-up failed",
+        queuedMessages: [
+          {
+            id: "queued-c",
+            piSessionId: "pi-session-active",
+            body: "C",
+            status: "pending" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+          },
+          {
+            id: "queued-a",
+            piSessionId: "pi-session-active",
+            body: "A",
+            status: "pending" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+          },
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-active",
+            body: "B",
+            status: "withdrawn" as const,
+            createdAt: "2026-06-26T08:10:00.000Z",
+            withdrawnAt: "2026-06-26T08:10:01.000Z",
+          },
+        ],
+      }),
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    dragQueuedCard(cards[1]!, cards[0]!);
+
+    await waitFor(() => {
+      const synced = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(synced.map((card) => card.textContent)).toEqual([
+        expect.stringContaining("C"),
+        expect.stringContaining("A"),
+        expect.stringContaining("B"),
+      ]);
+      expect(synced[2]).toHaveAttribute("data-withdrawn");
+    });
+  });
+
+  it("rolls waiting-area order back when reorder fails", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    const bridge = {
+      ...inner,
+      reorderQueuedMessages: async () => {
+        throw new PiRuntimeBridgeError({
+          stage: "reordering queued messages",
+          message: "Pi rejected the reorder.",
+        });
+      },
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "First follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "Second follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    dragQueuedCard(cards[1]!, cards[0]!);
+
+    await waitFor(() => {
+      const restored = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(restored[0]).toHaveTextContent("First follow-up");
+      expect(restored[1]).toHaveTextContent("Second follow-up");
+    });
+  });
+
+  it("drops a card after the target when the pointer is in the lower half", async () => {
+    const user = userEvent.setup();
+    const bridge = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    dragQueuedCard(cards[0]!, cards[2]!, "after");
+
+    await waitFor(() => {
+      const reordered = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(reordered.map((card) => card.textContent)).toEqual([
+        expect.stringContaining("B"),
+        expect.stringContaining("C"),
+        expect.stringContaining("A"),
+      ]);
+    });
+  });
+
+  it("ignores a second drag while reorder is in flight and rolls back to the request snapshot", async () => {
+    const user = userEvent.setup();
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:10:00.000Z",
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const bridge = {
+      ...inner,
+      reorderQueuedMessages: async (input: { piSessionId: string; orderedIds: string[] }) => {
+        started += 1;
+        if (started === 1) {
+          await held;
+          throw new PiRuntimeBridgeError({
+            stage: "reordering queued messages",
+            message: "Pi rejected the first reorder.",
+          });
+        }
+        return inner.reorderQueuedMessages(input);
+      },
+    };
+    await renderRunningQueue(bridge);
+
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "A");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "B");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(screen.getByPlaceholderText("Queue the next task…"), "C");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    const pendingQueue = await screen.findByTestId("queued-message-list");
+    const cards = within(pendingQueue).getAllByTestId("chat-queued-message");
+    dragQueuedCard(cards[1]!, cards[0]!);
+
+    await waitFor(() => {
+      expect(within(pendingQueue).getAllByTestId("chat-queued-message")[0]).toHaveAttribute(
+        "draggable",
+        "false",
+      );
+    });
+
+    const inFlight = within(pendingQueue).getAllByTestId("chat-queued-message");
+    dragQueuedCard(inFlight[2]!, inFlight[0]!);
+    release();
+
+    await waitFor(() => {
+      const restored = within(pendingQueue).getAllByTestId("chat-queued-message");
+      expect(restored.map((card) => card.textContent)).toEqual([
+        expect.stringContaining("A"),
+        expect.stringContaining("B"),
+        expect.stringContaining("C"),
+      ]);
+    });
+    expect(started).toBe(1);
+  });
+
   it("shows an ephemeral assistant placeholder while a run has no assistant events yet", async () => {
     let projection = applySessionProjectionEvent(
       createSessionProjection({

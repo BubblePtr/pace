@@ -132,6 +132,16 @@ export type SessionProjectionEvent =
       event: PiRuntimeEvent;
     }
   | {
+      type: "queued-messages-reordered";
+      orderedIds: string[];
+      occurredAt: string;
+    }
+  | {
+      type: "queued-messages-synced";
+      queuedMessages: PiQueuedMessage[];
+      occurredAt: string;
+    }
+  | {
       type: "steer-submitted";
       event: PiRuntimeEvent;
     }
@@ -646,6 +656,64 @@ export function applySessionProjectionEvent(
         ),
         updatedAt: event.event.timestamp,
       };
+    case "queued-messages-reordered": {
+      const byId = new Map(
+        projection.queuedMessages.map((queuedMessage) => [queuedMessage.id, queuedMessage]),
+      );
+      const reordered = event.orderedIds.map((id) => {
+        const queuedMessage = byId.get(id);
+        if (!queuedMessage) {
+          throw new Error(`Queued message "${id}" was not found.`);
+        }
+        return queuedMessage;
+      });
+      const placed = new Set(event.orderedIds);
+      const leftover = projection.queuedMessages.filter(
+        (queuedMessage) => !placed.has(queuedMessage.id),
+      );
+
+      return {
+        ...projection,
+        queuedMessages: [...reordered, ...leftover],
+        updatedAt: event.occurredAt,
+      };
+    }
+    case "queued-messages-synced": {
+      const localById = new Map(
+        projection.queuedMessages.map((queuedMessage) => [queuedMessage.id, queuedMessage]),
+      );
+      const rank = { pending: 0, processing: 1, withdrawn: 2 } as const;
+      const merged = event.queuedMessages.map((incoming) => {
+        const local = localById.get(incoming.id);
+        if (!local) {
+          return { ...incoming };
+        }
+        if (rank[local.status] > rank[incoming.status]) {
+          return {
+            ...incoming,
+            status: local.status,
+            ...(local.processingStartedAt
+              ? { processingStartedAt: local.processingStartedAt }
+              : {}),
+            ...(local.withdrawnAt ? { withdrawnAt: local.withdrawnAt } : {}),
+          };
+        }
+        if (
+          incoming.status === "processing" &&
+          local.processingStartedAt &&
+          !incoming.processingStartedAt
+        ) {
+          return { ...incoming, processingStartedAt: local.processingStartedAt };
+        }
+        return { ...incoming };
+      });
+
+      return {
+        ...projection,
+        queuedMessages: merged,
+        updatedAt: event.occurredAt,
+      };
+    }
     case "steer-submitted":
       return {
         ...projection,

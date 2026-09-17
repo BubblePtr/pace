@@ -236,13 +236,22 @@ export function createPiRpcProcessDriver(
       }
 
       return {
-        id: input.queuedMessageId,
-        piSessionId: input.piSessionId,
-        body: "",
-        status: "withdrawn",
-        createdAt: now(),
-        withdrawnAt: now(),
+        ok: true as const,
+        queuedMessages: [
+          {
+            id: input.queuedMessageId,
+            piSessionId: input.piSessionId,
+            body: "",
+            status: "withdrawn" as const,
+            createdAt: now(),
+            withdrawnAt: now(),
+          },
+        ],
       };
+    },
+
+    async reorderQueuedMessages() {
+      throw new Error("Pi RPC driver does not support reorder_queued_messages.");
     },
 
     async steerRun(input) {

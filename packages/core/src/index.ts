@@ -137,6 +137,7 @@ export {
   type RuntimeModelControls,
   type RuntimeGatewaySnapshot,
   type RuntimeGatewayQueuedMessage,
+  type RuntimeGatewayQueueMutationResult,
   type RuntimeToolSchema,
   type RuntimeToolSchemas,
   type RuntimeGatewaySequencer,

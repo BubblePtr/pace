@@ -6,12 +6,17 @@ import type { PresenceMotion } from "@/shared/ui/chat/use-presence-list";
  * One waiting-area row under a running session: a queued follow-up rendered on
  * a single truncating line, carrying its own routing actions. Steer promotes
  * the message into the current run (only offered while a run is active);
- * Withdraw removes it. Order is expressed by position, not numbering.
+ * Withdraw removes it. Pending rows are whole-card draggable; order is
+ * expressed by position, not numbering.
  * Decision record: .scratch/composer-redesign/PRD.md
  */
 type ChatQueuedMessageOwnProps = {
   body: string;
   isWithdrawn?: boolean;
+  /** Whole-card drag; 45% opacity. Decision: .scratch/composer-redesign/PRD.md */
+  isDragging?: boolean;
+  /** Accent line on the top or bottom edge of the drop target. */
+  dropTarget?: "before" | "after";
   /** List presence; omit on first paint so a restored queue does not enter. */
   presence?: PresenceMotion;
   onExitTransitionEnd?: () => void;
@@ -29,6 +34,8 @@ export type ChatQueuedMessageProps = Omit<
 export function ChatQueuedMessage({
   body,
   isWithdrawn = false,
+  isDragging = false,
+  dropTarget,
   presence = "none",
   onExitTransitionEnd,
   onSteer,
@@ -43,6 +50,8 @@ export function ChatQueuedMessage({
         isWithdrawn ? "gap-3 px-3 py-2" : "gap-2 py-1.5 pl-3 pr-2"
       } ${className ?? ""}`.trim()}
       aria-hidden={presence === "exit" ? true : undefined}
+      data-dragging={isDragging ? "" : undefined}
+      data-drop-target={dropTarget}
       data-presence={presence === "none" ? undefined : presence}
       data-testid="chat-queued-message"
       data-withdrawn={isWithdrawn ? "" : undefined}

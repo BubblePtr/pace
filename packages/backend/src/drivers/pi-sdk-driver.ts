@@ -1,6 +1,7 @@
 import type {
   RuntimeContextUsage,
   RuntimeGatewayQueuedMessage,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewaySnapshot,
   RuntimeGatewaySummary,
   RuntimeModelControls,
@@ -54,7 +55,8 @@ export type PiSdkSessionRuntime = {
     message: string,
     images?: RuntimePromptImage[],
   ): Promise<PiSdkQueuedMessage>;
-  withdrawQueuedMessage?(queuedMessageId: string): Promise<PiSdkQueuedMessage>;
+  withdrawQueuedMessage?(queuedMessageId: string): Promise<RuntimeGatewayQueueMutationResult>;
+  reorderQueuedMessages?(orderedIds: string[]): Promise<RuntimeGatewayQueueMutationResult>;
   steerRun?(message: string, images?: RuntimePromptImage[]): Promise<void>;
   stopRun?(): Promise<void>;
   sendSubagent?(input: {
@@ -422,6 +424,19 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       }
 
       return runtime.withdrawQueuedMessage(input.queuedMessageId);
+    },
+
+    async reorderQueuedMessages(input) {
+      const runtime = runtimeFor(input.piSessionId, "reorder_queued_messages");
+
+      if (!runtime.reorderQueuedMessages) {
+        unsupported(
+          "reorder_queued_messages",
+          "the injected SDK runtime has no reorderQueuedMessages adapter",
+        );
+      }
+
+      return runtime.reorderQueuedMessages(input.orderedIds);
     },
 
     async steerRun(input) {
