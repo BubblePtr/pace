@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { launchPace } from "../fixtures/electron-app";
+
+// The bundled Pi version is pinned exactly in the backend manifest; read it
+// there so SDK bumps don't require touching this assertion.
+const bundledPiVersion = (
+  JSON.parse(
+    readFileSync(new URL("../../packages/backend/package.json", import.meta.url), "utf8"),
+  ) as { dependencies: Record<string, string> }
+).dependencies["@earendil-works/pi-coding-agent"];
 
 test.describe("M5.2: First-run preflight", () => {
   test("cold start reaches preflight and keeps provider settings usable before setup completes", async ({}, testInfo) => {
@@ -43,7 +52,11 @@ test.describe("M5.2: First-run preflight", () => {
       const continueButton = testApp.window.getByRole("button", { name: /Continue/i });
       await expect(continueButton).toBeEnabled({ timeout: 30_000 });
       await expect(testApp.window.getByText("Bundled Pi engine available")).toBeVisible();
-      await expect(testApp.window.getByText(/Pace .* · Pi 0\.84\.3 · SDK/)).toBeVisible();
+      await expect(
+        testApp.window.getByText(
+          new RegExp(`Pace .* · Pi ${bundledPiVersion.replaceAll(".", "\\.")} · SDK`),
+        ),
+      ).toBeVisible();
       await testApp.window.screenshot({ path: testInfo.outputPath("bundled-pi-preflight.png"), fullPage: true });
       await continueButton.click();
 
