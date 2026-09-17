@@ -5,7 +5,15 @@
 import { createAgentRuntimeEventNormalizer } from "../gateway/agent-runtime-event-normalizer";
 import { createTintinwebSubagentShim, piEventBusFromUnknown } from "../subagent/tintinweb";
 import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import {
+  AUTO_TITLE_TIMEOUT_MS,
+  buildSessionTitlePrompt,
+  sanitizeSessionTitle,
+  sessionTitleTextFromContent,
+  shouldGenerateSessionTitle,
+} from "./session-auto-title";
 import type {
   RuntimeContextUsage,
   RuntimeGatewayQueuedMessage,
@@ -42,7 +50,16 @@ export type PublicPiSdkModel = {
   input?: string[];
 };
 
-export type PublicPiSdkModelRegistry = {
+/**
+ * One-shot completion used for background work that is not part of the session
+ * transcript. Parameters stay `unknown`: Pi's `Context` / stream-option generics
+ * are structurally stricter than anything Pace needs to describe here.
+ */
+export type PublicPiSdkModelCompleter = {
+  complete?(model: unknown, context: unknown, options?: unknown): Promise<{ content?: unknown }>;
+};
+
+export type PublicPiSdkModelRegistry = PublicPiSdkModelCompleter & {
   getAvailable(): PublicPiSdkModel[];
   find(provider: string, modelId: string): PublicPiSdkModel | undefined;
 };
@@ -52,7 +69,7 @@ export type PublicPiSdkModelRegistry = {
  * The adapter reads models from `modelRuntime` when present and falls back to
  * the legacy `modelRegistry` surface so existing test doubles keep working.
  */
-export type PublicPiSdkModelRuntime = {
+export type PublicPiSdkModelRuntime = PublicPiSdkModelCompleter & {
   getAvailableSnapshot?(): readonly PublicPiSdkModel[];
   getModel?(provider: string, modelId: string): PublicPiSdkModel | undefined;
 };
@@ -71,6 +88,7 @@ export type PublicPiSdkAgentSession = {
       errorMessage?: string;
     };
   };
+  setSessionName?(name: string): void;
   prompt(text: string, options?: { images?: ReturnType<typeof toPiImageContent>[] }): Promise<void>;
   followUp?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
   steer?(message: string, images?: ReturnType<typeof toPiImageContent>[]): Promise<void>;
@@ -176,6 +194,83 @@ export type PublicPiSdkRuntimeFactoryOptions = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Name untitled sessions from the first exchange. Pi only emits
+ * `session_info_changed` when something sets a name, and a bare Pi install has
+ * no auto-name extension, so Pace generates the name itself and writes it back
+ * through `setSessionName` — Pi then persists it and emits the event Pace
+ * already bridges.
+ */
+function createSessionAutoTitleObserver(session: PublicPiSdkAgentSession): (event: unknown) => void {
+  let attempted = false;
+  let userText = "";
+
+  return (event) => {
+    if (!isRecord(event) || event.type !== "message_end" || !isRecord(event.message)) {
+      return;
+    }
+
+    if (event.message.role === "user") {
+      userText ||= sessionTitleTextFromContent(event.message.content);
+      return;
+    }
+
+    if (event.message.role !== "assistant") {
+      return;
+    }
+
+    const assistantText = sessionTitleTextFromContent(event.message.content);
+
+    if (!shouldGenerateSessionTitle({ currentName: session.sessionName, attempted, userText, assistantText })) {
+      return;
+    }
+
+    // Mark before the request: naming is once per session, so a provider
+    // failure must not fire another request on the next reply.
+    attempted = true;
+    void generateSessionTitle(session, buildSessionTitlePrompt({ userText, assistantText }))
+      .then((name) => {
+        if (name) {
+          session.setSessionName?.(name);
+        }
+      })
+      .catch((error) => {
+        console.warn("Pace could not name this session automatically.", error);
+      });
+  };
+}
+
+async function generateSessionTitle(session: PublicPiSdkAgentSession, prompt: string): Promise<string> {
+  // Pi 0.84 moved completions from the ModelRegistry onto the ModelRuntime.
+  const completer = session.modelRuntime?.complete ? session.modelRuntime : session.modelRegistry;
+
+  if (!session.model || !completer?.complete) {
+    return "";
+  }
+
+  const response = await withTimeout(
+    completer.complete(
+      session.model,
+      { messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }] },
+      // A fresh session id keeps this side request out of the session's own
+      // context and cache; the reply is one short line, so no cache retention.
+      { reasoningEffort: "low", cacheRetention: "none", sessionId: randomUUID() },
+    ),
+    AUTO_TITLE_TIMEOUT_MS,
+  );
+
+  return sanitizeSessionTitle(sessionTitleTextFromContent(response?.content));
+}
+
+function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms.`)), timeoutMs);
+    // Background work must never keep the session process alive on its own.
+    timer.unref?.();
+    work.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
 }
 
 function isUserMessageEndEvent(value: unknown) {
@@ -832,6 +927,7 @@ async function createPublicPiSdkRuntime(context: {
         });
       }
     });
+    sessionEventListeners.add(createSessionAutoTitleObserver(session));
     const subagentShim = createTintinwebSubagentShim({
       events: piEventBusFromUnknown(context.resourceLoader) ?? piEventBusFromUnknown(session),
       subscribeSession: (listener) => {
