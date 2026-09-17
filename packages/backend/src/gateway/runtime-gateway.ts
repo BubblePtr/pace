@@ -4,6 +4,7 @@ import type {
   RuntimeGatewayEventEnvelope,
   RuntimeGatewayEventInput,
   RuntimeGatewayQueuedMessage,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewayRequest,
   RuntimeGatewayResponse,
   RuntimeGatewaySnapshot,
@@ -83,6 +84,16 @@ export type WithdrawQueuedMessageInput = {
   queuedMessageId: string;
 };
 
+export type ReorderQueuedMessagesInput = {
+  piSessionId: string;
+  orderedIds: string[];
+};
+
+export type SteerFromQueueInput = {
+  piSessionId: string;
+  queuedMessageId: string;
+};
+
 export type SteerRunInput = {
   piSessionId: string;
   message: string;
@@ -122,7 +133,9 @@ export type PiRuntimeDriver = {
   forkSession(input: ForkRuntimeSessionInput): Promise<ForkRuntimeSessionResult>;
   sendPrompt(input: SendPromptInput): Promise<RuntimeGatewayDriverEvent>;
   queueFollowUp(input: QueueFollowUpInput): Promise<RuntimeGatewayQueuedMessage>;
-  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<RuntimeGatewayQueuedMessage>;
+  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<RuntimeGatewayQueueMutationResult>;
+  reorderQueuedMessages(input: ReorderQueuedMessagesInput): Promise<RuntimeGatewayQueueMutationResult>;
+  steerFromQueue(input: SteerFromQueueInput): Promise<RuntimeGatewayQueueMutationResult>;
   steerRun(input: SteerRunInput): Promise<RuntimeGatewayDriverEvent>;
   stopRun(input: StopRunInput): Promise<RuntimeGatewayDriverEvent>;
   sendSubagent?(input: SendSubagentInput): Promise<{ ok: true }>;
@@ -561,6 +574,36 @@ async function dispatchRuntimeGatewayRequest(input: {
         piSessionId: requiredString(params.piSessionId, "piSessionId"),
         queuedMessageId: requiredString(params.queuedMessageId, "queuedMessageId"),
       });
+    case "reorder_queued_messages":
+      return input.driver.reorderQueuedMessages({
+        piSessionId: requiredString(params.piSessionId, "piSessionId"),
+        orderedIds: requiredStringArray(params.orderedIds, "orderedIds"),
+      });
+    case "steer_from_queue": {
+      const submittedAt = input.now();
+      const piSessionId = requiredString(params.piSessionId, "piSessionId");
+      const queuedMessageId = requiredString(params.queuedMessageId, "queuedMessageId");
+      const result = await input.driver.steerFromQueue({
+        piSessionId,
+        queuedMessageId,
+      });
+      const target = result.queuedMessages.find((message) => message.id === queuedMessageId);
+      if (target?.status === "steered") {
+        input.recordUserSubmission(piSessionId, submittedAt);
+        input.emit({
+          piSessionId,
+          type: "control",
+          payload: {
+            kind: "control",
+            role: "user",
+            title: "Steer",
+            body: target.body,
+            ...(target.images?.length ? { images: target.images } : {}),
+          },
+        });
+      }
+      return result;
+    }
     case "steer_run": {
       const submittedAt = input.now();
       const steer = parsePromptText(params.message, params.images, "message");

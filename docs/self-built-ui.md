@@ -26,7 +26,7 @@
 | chat-thought-markdown | `shared/ui/chat/` | 思考正文的流式安全行内 markdown(`**` / `*` / 反引号);Astryx Markdown 过重且会把未闭合标记露出来 |
 | text-shimmer | `shared/ui/chat/` | 流式占位闪光 |
 | chat-prompt-suggestion | `shared/ui/chat/` | **在用**(agent-workspace 空 draft 建议卡;2026-08-09 核实,此前误判候删) |
-| chat-queued-message | `shared/ui/chat/` | 等待区 item(queue-first composer,2026-08-12 原型探索胜出);Astryx 无队列概念;决策记录 `.scratch/composer-redesign/PRD.md` |
+| chat-queued-message | `shared/ui/chat/` | 等待区 item(queue-first composer,2026-08-12 原型探索胜出);Astryx 无队列概念;pending 可拖、可 Steer/Withdraw;steered 显示 "Steered"、withdrawn 显示 "Withdrawn"，都是终态无动作。决策记录 `.scratch/composer-redesign/PRD.md` |
 | use-presence-list | `shared/ui/chat/use-presence-list.ts` | 列表行进出场的 presence hook(2026-09-06 动效打磨):首帧不播进场(已排队的行在页面加载时静止),之后插入标 `enter`、移除标 `exit` 并保留到 `transitionend`(带超时兜底),减动效下立即增删;重新加回正在退场的行取消退场而不重播进场。`ChatQueuedMessage` 与 `SessionSurfaceTabs` 共用;不引入 Motion 库(决策:项目无手势驱动交互,纯 CSS transition 已可中断) |
 | pi-kpi / pi-line-chart / pi-heatmap / dot-matrix | `shared/ui/` | KPI/图表原语,Astryx 无 chart 系。2026-09-17 Usage 重构（决策见 `.scratch/usage-redesign/DECISION.md`）：`pi-bar-chart` 随旧 token 趋势图一起删除；新增 `PiLineChart`（单序列折线 + 十字线 tooltip）与 `PiSparkline`（KPI 卡装饰线，进 `PiKpi` 新增的 `footer` 槽）、`PiHeatmap`（行×列网格，单色相六档，档位由调用方给，页面用 `rankLevels` 按排名分档） |
 | pi-trajectory-ledger | `shared/ui/` | Trajectory Cockpit 台账(2026-08-18 原型重构):Run 顶层分组 + Turn 边界圆点 + 徽章行(`名称 {请求} → 结果`),行永不内联展开;读模型在 `entities/session/trajectory-model.ts`(Run>Turn>Step,见 CONTEXT.md);USER/ASSISTANT/TOOL/CONTEXT 四徽章一律取自 `--pigui-data-*` 数据调色板,CONTEXT 用 [#106](https://github.com/BubblePtr/pace/issues/106) 新增的 `--pigui-data-green`(不再借语义色 `--success`)。选中态 / 过滤 / step·turn ref 放在根上经 context 下发，`.Run` 只传 `run`（外加可选 `isDimmed`） |
@@ -50,7 +50,7 @@
 | 图表原语扩展(面积/日历热力/会话表) | [#87](https://github.com/BubblePtr/pace/issues/87) | 折线与星期×小时热力已随 Usage 重构落地；其余等需求驱动 |
 | Dynamic workflow visualization(图/DAG/时间线) | [#84](https://github.com/BubblePtr/pace/issues/84) | **future,远期**(2026-08-09 降级) |
 | 思维链样式可选项(Compact/Timeline) | [#81](https://github.com/BubblePtr/pace/issues/81) | **future,后置**(被 Appearance 设置页阻塞) |
-| Composer 队列拖拽重排 | [#97](https://github.com/BubblePtr/pace/issues/97) | 被 runtime gateway reorder 能力阻塞 |
+| Composer 队列拖拽重排 | [#97](https://github.com/BubblePtr/pace/issues/97) | 已落地：clear + replay 按 Pace 消息 id 重放；等待区整卡拖拽。Pi follow-up mode 为 `all` 时不可重排。Steer-from-queue（[#327](https://github.com/BubblePtr/pace/issues/327)）在同一把锁里把 follow-up 提升为 steering，行显示 Steered |
 | 设置弹窗可见模型管理(Add Models 落点) | [#102](https://github.com/BubblePtr/pace/issues/102) | 已落地；Add Models 在当前工作区打开 Settings 的 Models 分类，偏好沿用 localStorage |
 
 ## 备注:context-usage-meter 的数据链路(#101)

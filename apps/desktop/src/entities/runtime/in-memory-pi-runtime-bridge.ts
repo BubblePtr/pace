@@ -190,7 +190,108 @@ export function createInMemoryPiRuntimeBridge(
 
       queuedMessages.set(withdrawnMessage.id, withdrawnMessage);
 
-      return { ...withdrawnMessage };
+      return {
+        ok: true as const,
+        queuedMessages: [...queuedMessages.values()]
+          .filter((message) => message.piSessionId === input.piSessionId)
+          .map((message) => ({ ...message })),
+      };
+    },
+
+    async reorderQueuedMessages(input) {
+      const pending = [...queuedMessages.values()].filter(
+        (message) => message.piSessionId === input.piSessionId && message.status === "pending",
+      );
+      const pendingIds = new Set(pending.map((message) => message.id));
+
+      if (
+        input.orderedIds.length !== pending.length ||
+        new Set(input.orderedIds).size !== input.orderedIds.length
+      ) {
+        throw new PiRuntimeBridgeError({
+          stage: "reordering queued messages",
+          message: "Queued message order must list each pending follow-up exactly once.",
+        });
+      }
+
+      const orderedPending: PiQueuedMessage[] = [];
+      for (const id of input.orderedIds) {
+        const queuedMessage = queuedMessages.get(id);
+        if (!queuedMessage || !pendingIds.has(id)) {
+          throw new PiRuntimeBridgeError({
+            stage: "reordering queued messages",
+            message: `Queued message "${id}" was not found.`,
+          });
+        }
+        orderedPending.push(queuedMessage);
+      }
+      for (const message of orderedPending) {
+        queuedMessages.delete(message.id);
+      }
+      for (const message of orderedPending) {
+        queuedMessages.set(message.id, message);
+      }
+
+      return {
+        ok: true as const,
+        queuedMessages: [...queuedMessages.values()]
+          .filter((message) => message.piSessionId === input.piSessionId)
+          .map((message) => ({ ...message })),
+      };
+    },
+
+    async steerFromQueue(input) {
+      const queuedMessage = queuedMessages.get(input.queuedMessageId);
+
+      if (!queuedMessage || queuedMessage.piSessionId !== input.piSessionId) {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
+          message: `Queued message "${input.queuedMessageId}" was not found.`,
+        });
+      }
+
+      if (queuedMessage.status !== "pending") {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
+          message: "Queued message can no longer be steered.",
+        });
+      }
+
+      const steeredMessage: PiQueuedMessage = {
+        ...queuedMessage,
+        status: "steered",
+        steeredAt: now(),
+      };
+
+      queuedMessages.set(steeredMessage.id, steeredMessage);
+
+      const state = states.get(input.piSessionId);
+      if (state) {
+        eventCounter += 1;
+        const event: PiRuntimeEvent = {
+          id: `runtime-event-${eventCounter}`,
+          piSessionId: input.piSessionId,
+          kind: "control",
+          role: "user",
+          title: "Steer",
+          body: queuedMessage.body,
+          ...(queuedMessage.images?.length ? { images: queuedMessage.images } : {}),
+          timestamp: now(),
+        };
+        state.status = "running";
+        state.updatedAt = event.timestamp;
+        state.events = [...state.events, event];
+        for (const listener of listeners.get(input.piSessionId) ?? []) {
+          listener({ ...event });
+        }
+      }
+
+      return {
+        ok: true as const,
+        queuedMessages: [...queuedMessages.values()]
+          .filter((message) => message.piSessionId === input.piSessionId)
+          .map((message) => ({ ...message })),
+      };
     },
 
     async steerRun(input) {

@@ -5,6 +5,7 @@ import type {
   PiRuntimeSummary,
   PiSessionState,
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
 } from "@/entities/runtime/pi-runtime-bridge";
 import {
@@ -60,6 +61,7 @@ export type SessionProjection = {
   modelControls: RuntimeModelControls | null;
   // Live context-window occupancy; null until the runtime first reports it.
   contextUsage: RuntimeContextUsage | null;
+  followUpMode?: RuntimeFollowUpMode;
   stale: boolean;
   staleReason: string | null;
   failure: SessionCreationFailure | null;
@@ -96,6 +98,7 @@ export type SessionProjectionEvent =
       piSessionId: string;
       summary?: PiRuntimeSummary;
       modelControls?: RuntimeModelControls;
+      followUpMode?: RuntimeFollowUpMode;
       occurredAt: string;
     }
   | {
@@ -130,6 +133,16 @@ export type SessionProjectionEvent =
       type: "queued-message-processing-started";
       queuedMessageId: string;
       event: PiRuntimeEvent;
+    }
+  | {
+      type: "queued-messages-reordered";
+      orderedIds: string[];
+      occurredAt: string;
+    }
+  | {
+      type: "queued-messages-synced";
+      queuedMessages: PiQueuedMessage[];
+      occurredAt: string;
     }
   | {
       type: "steer-submitted";
@@ -524,6 +537,7 @@ export function applySessionProjectionEvent(
                 : null,
             }
           : projection.modelControls,
+        followUpMode: event.followUpMode ?? projection.followUpMode,
         updatedAt: event.occurredAt,
       };
     case "runtime-event-received":
@@ -646,6 +660,68 @@ export function applySessionProjectionEvent(
         ),
         updatedAt: event.event.timestamp,
       };
+    case "queued-messages-reordered": {
+      const byId = new Map(
+        projection.queuedMessages.map((queuedMessage) => [queuedMessage.id, queuedMessage]),
+      );
+      const reordered = event.orderedIds.map((id) => {
+        const queuedMessage = byId.get(id);
+        if (!queuedMessage) {
+          throw new Error(`Queued message "${id}" was not found.`);
+        }
+        return queuedMessage;
+      });
+      const placed = new Set(event.orderedIds);
+      const leftover = projection.queuedMessages.filter(
+        (queuedMessage) => !placed.has(queuedMessage.id),
+      );
+
+      return {
+        ...projection,
+        queuedMessages: [...reordered, ...leftover],
+        updatedAt: event.occurredAt,
+      };
+    }
+    case "queued-messages-synced": {
+      const localById = new Map(
+        projection.queuedMessages.map((queuedMessage) => [queuedMessage.id, queuedMessage]),
+      );
+      const rank = { pending: 0, processing: 1, steered: 2, withdrawn: 2 } as const;
+      const merged = event.queuedMessages.map((incoming) => {
+        const local = localById.get(incoming.id);
+        if (!local) {
+          return { ...incoming };
+        }
+        if (
+          rank[local.status] > rank[incoming.status] ||
+          (rank[local.status] === rank[incoming.status] && local.status !== incoming.status)
+        ) {
+          return {
+            ...incoming,
+            status: local.status,
+            ...(local.processingStartedAt
+              ? { processingStartedAt: local.processingStartedAt }
+              : {}),
+            ...(local.steeredAt ? { steeredAt: local.steeredAt } : {}),
+            ...(local.withdrawnAt ? { withdrawnAt: local.withdrawnAt } : {}),
+          };
+        }
+        if (
+          incoming.status === "processing" &&
+          local.processingStartedAt &&
+          !incoming.processingStartedAt
+        ) {
+          return { ...incoming, processingStartedAt: local.processingStartedAt };
+        }
+        return { ...incoming };
+      });
+
+      return {
+        ...projection,
+        queuedMessages: merged,
+        updatedAt: event.occurredAt,
+      };
+    }
     case "steer-submitted":
       return {
         ...projection,
@@ -746,6 +822,7 @@ export function applySessionProjectionEvent(
         contextUsage: event.state.contextUsage
           ? { ...event.state.contextUsage }
           : projection.contextUsage,
+        followUpMode: event.state.followUpMode ?? projection.followUpMode,
         stale: false,
         staleReason: null,
       };

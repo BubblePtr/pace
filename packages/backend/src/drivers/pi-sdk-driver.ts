@@ -1,6 +1,8 @@
 import type {
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeGatewayQueuedMessage,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewaySnapshot,
   RuntimeGatewaySummary,
   RuntimeModelControls,
@@ -29,7 +31,14 @@ export type PiSdkUserMessageBoundary = {
 export type PiSdkSnapshotPatch = Partial<
   Pick<
     RuntimeGatewaySnapshot,
-    "sessionName" | "status" | "events" | "summary" | "modelControls" | "contextUsage" | "updatedAt"
+    | "sessionName"
+    | "status"
+    | "events"
+    | "summary"
+    | "modelControls"
+    | "contextUsage"
+    | "followUpMode"
+    | "updatedAt"
   >
 >;
 
@@ -43,6 +52,7 @@ export type PiSdkSessionRuntime = {
   summary?: RuntimeGatewaySummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   /**
    * Next synthetic user message index after reattach (`user:{n}`).
    * Resume/fork must seed this from session history so ids do not collide
@@ -54,7 +64,9 @@ export type PiSdkSessionRuntime = {
     message: string,
     images?: RuntimePromptImage[],
   ): Promise<PiSdkQueuedMessage>;
-  withdrawQueuedMessage?(queuedMessageId: string): Promise<PiSdkQueuedMessage>;
+  withdrawQueuedMessage?(queuedMessageId: string): Promise<RuntimeGatewayQueueMutationResult>;
+  reorderQueuedMessages?(orderedIds: string[]): Promise<RuntimeGatewayQueueMutationResult>;
+  steerFromQueue?(queuedMessageId: string): Promise<RuntimeGatewayQueueMutationResult>;
   steerRun?(message: string, images?: RuntimePromptImage[]): Promise<void>;
   stopRun?(): Promise<void>;
   sendSubagent?(input: {
@@ -150,6 +162,10 @@ function cloneSnapshot(snapshot: RuntimeGatewaySnapshot): RuntimeGatewaySnapshot
     cloned.contextUsage = cloneContextUsage(snapshot.contextUsage);
   }
 
+  if (snapshot.followUpMode) {
+    cloned.followUpMode = snapshot.followUpMode;
+  }
+
   return cloned;
 }
 
@@ -188,6 +204,10 @@ function snapshotFromRuntime(input: {
     snapshot.contextUsage = cloneContextUsage(input.runtime.contextUsage);
   }
 
+  if (input.runtime.followUpMode) {
+    snapshot.followUpMode = input.runtime.followUpMode;
+  }
+
   return snapshot;
 }
 
@@ -217,6 +237,10 @@ function mergeSnapshotPatch(
 
   if (patch.contextUsage) {
     merged.contextUsage = cloneContextUsage(patch.contextUsage);
+  }
+
+  if (patch.followUpMode) {
+    merged.followUpMode = patch.followUpMode;
   }
 
   if (patch.updatedAt) {
@@ -422,6 +446,32 @@ export function createPiSdkDriver(options: PiSdkDriverOptions = {}): PiRuntimeDr
       }
 
       return runtime.withdrawQueuedMessage(input.queuedMessageId);
+    },
+
+    async reorderQueuedMessages(input) {
+      const runtime = runtimeFor(input.piSessionId, "reorder_queued_messages");
+
+      if (!runtime.reorderQueuedMessages) {
+        unsupported(
+          "reorder_queued_messages",
+          "the injected SDK runtime has no reorderQueuedMessages adapter",
+        );
+      }
+
+      return runtime.reorderQueuedMessages(input.orderedIds);
+    },
+
+    async steerFromQueue(input) {
+      const runtime = runtimeFor(input.piSessionId, "steer_from_queue");
+
+      if (!runtime.steerFromQueue) {
+        unsupported(
+          "steer_from_queue",
+          "the injected SDK runtime has no steerFromQueue adapter",
+        );
+      }
+
+      return runtime.steerFromQueue(input.queuedMessageId);
     },
 
     async steerRun(input) {

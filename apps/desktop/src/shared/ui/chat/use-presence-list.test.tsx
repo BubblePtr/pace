@@ -78,6 +78,18 @@ describe("usePresenceList", () => {
     expect(screen.getByTestId("item-b")).toHaveAttribute("data-motion", "enter");
   });
 
+  it("follows source order when live items are rearranged", () => {
+    const { rerender } = render(<Harness items={["a", "b", "c"]} />);
+
+    rerender(<Harness items={["c", "a", "b"]} />);
+
+    expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+  });
+
   it("keeps a removed item until its exit transition ends", () => {
     const { rerender } = render(<Harness items={["a", "b"]} />);
 

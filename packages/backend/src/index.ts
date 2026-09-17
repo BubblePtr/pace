@@ -32,6 +32,7 @@ export {
   type SendPromptInput,
   type QueueFollowUpInput,
   type WithdrawQueuedMessageInput,
+  type SteerFromQueueInput,
   type SteerRunInput,
   type StopRunInput,
   type SendSubagentInput,

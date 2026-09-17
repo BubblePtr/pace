@@ -9,6 +9,7 @@ import type {
   RemovePackageResult,
   CheckPackageUpdatesResult,
   RuntimeGatewayEventEnvelope,
+  RuntimeGatewayQueueMutationResult,
   RuntimeGatewayQueuedMessage,
   RuntimeGatewaySnapshot,
   RuntimeGatewaySummary,
@@ -419,6 +420,7 @@ function stateFromSnapshot(snapshot: RuntimeGatewaySnapshot): PiSessionState {
         }
       : {}),
     ...(snapshot.contextUsage ? { contextUsage: { ...snapshot.contextUsage } } : {}),
+    ...(snapshot.followUpMode ? { followUpMode: snapshot.followUpMode } : {}),
     updatedAt: snapshot.updatedAt,
   };
   const summary = runtimeSummaryFromGateway(snapshot.summary);
@@ -520,6 +522,10 @@ function queuedMessageFromGateway(message: RuntimeGatewayQueuedMessage): PiQueue
 
   if (message.withdrawnAt) {
     queued.withdrawnAt = message.withdrawnAt;
+  }
+
+  if (message.steeredAt) {
+    queued.steeredAt = message.steeredAt;
   }
 
   return queued;
@@ -855,19 +861,74 @@ export function createRuntimeGatewayClient(
 
     async withdrawQueuedMessage(input) {
       try {
-        const withdrawnMessage = queuedMessageFromGateway(
-          await invoke<RuntimeGatewayQueuedMessage>("withdraw_queued_message", {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "withdraw_queued_message",
+          {
             piSessionId: input.piSessionId,
             queuedMessageId: input.queuedMessageId,
-          }),
+          },
         );
-
-        queuedMessages.set(withdrawnMessage.id, withdrawnMessage);
-
-        return cloneQueuedMessage(withdrawnMessage);
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
       } catch (error) {
         throw new PiRuntimeBridgeError({
           stage: "withdrawing queued message",
+          message: errorMessage(error),
+        });
+      }
+    },
+
+    async reorderQueuedMessages(input) {
+      try {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "reorder_queued_messages",
+          {
+            piSessionId: input.piSessionId,
+            orderedIds: input.orderedIds,
+          },
+        );
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
+      } catch (error) {
+        throw new PiRuntimeBridgeError({
+          stage: "reordering queued messages",
+          message: errorMessage(error),
+        });
+      }
+    },
+
+    async steerFromQueue(input) {
+      try {
+        const result = await invoke<RuntimeGatewayQueueMutationResult>(
+          "steer_from_queue",
+          {
+            piSessionId: input.piSessionId,
+            queuedMessageId: input.queuedMessageId,
+          },
+        );
+        const messages = result.queuedMessages.map(queuedMessageFromGateway);
+        for (const message of messages) {
+          queuedMessages.set(message.id, message);
+        }
+        const cloned = messages.map(cloneQueuedMessage);
+        return result.ok
+          ? { ok: true as const, queuedMessages: cloned }
+          : { ok: false as const, queuedMessages: cloned, error: result.error };
+      } catch (error) {
+        throw new PiRuntimeBridgeError({
+          stage: "steering queued message",
           message: errorMessage(error),
         });
       }

@@ -450,12 +450,17 @@ describe("Pi SDK driver", () => {
       createdAt: "2026-07-01T00:00:00.000Z",
     }));
     const withdrawQueuedMessage = vi.fn(async (queuedMessageId: string) => ({
-      id: queuedMessageId,
-      piSessionId: "pi-sdk-session-1",
-      body: "Queue through SDK",
-      status: "withdrawn" as const,
-      createdAt: "2026-07-01T00:00:00.000Z",
-      withdrawnAt: "2026-07-01T00:00:01.000Z",
+      ok: true as const,
+      queuedMessages: [
+        {
+          id: queuedMessageId,
+          piSessionId: "pi-sdk-session-1",
+          body: "Queue through SDK",
+          status: "withdrawn" as const,
+          createdAt: "2026-07-01T00:00:00.000Z",
+          withdrawnAt: "2026-07-01T00:00:01.000Z",
+        },
+      ],
     }));
     const steerRun = vi.fn(async () => {});
     const driver = createPiSdkDriver({
@@ -489,8 +494,8 @@ describe("Pi SDK driver", () => {
         queuedMessageId: "queued-1",
       }),
     ).resolves.toMatchObject({
-      id: "queued-1",
-      status: "withdrawn",
+      ok: true,
+      queuedMessages: [expect.objectContaining({ id: "queued-1", status: "withdrawn" })],
     });
     await expect(
       driver.steerRun({

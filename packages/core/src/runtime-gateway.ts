@@ -108,6 +108,8 @@ export type RuntimeToolSchemas = {
   schemas: Record<string, RuntimeToolSchema>;
 };
 
+export type RuntimeFollowUpMode = "one-at-a-time" | "all";
+
 export type RuntimeGatewaySnapshot = {
   // Absent on legacy drivers. Cold snapshots contain presentation history only.
   executionState?: "cold" | "ready";
@@ -124,6 +126,7 @@ export type RuntimeGatewaySnapshot = {
   summary?: RuntimeGatewaySummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   updatedAt: string;
 };
 
@@ -132,11 +135,23 @@ export type RuntimeGatewayQueuedMessage = {
   piSessionId: string;
   body: string;
   images?: RuntimePromptImage[];
-  status: "pending" | "processing" | "withdrawn";
+  status: "pending" | "processing" | "steered" | "withdrawn";
   createdAt: string;
   processingStartedAt?: string;
+  steeredAt?: string;
   withdrawnAt?: string;
 };
+
+export type RuntimeGatewayQueueMutationResult =
+  | {
+      ok: true;
+      queuedMessages: RuntimeGatewayQueuedMessage[];
+    }
+  | {
+      ok: false;
+      queuedMessages: RuntimeGatewayQueuedMessage[];
+      error: string;
+    };
 
 export type RuntimeGatewaySequencerOptions = {
   now?: () => string;

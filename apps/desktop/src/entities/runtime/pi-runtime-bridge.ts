@@ -12,6 +12,7 @@ export type {
 import type {
   AgentRuntimeEvent,
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
   RuntimeModelSelection,
   RuntimePromptImage,
@@ -19,6 +20,7 @@ import type {
 
 export type {
   RuntimeContextUsage,
+  RuntimeFollowUpMode,
   RuntimeModelControls,
   RuntimeModelSelection,
 } from "@pace/core";
@@ -48,6 +50,8 @@ export type RuntimeBridgeFailureStage =
   | "forking session"
   | "queuing message"
   | "withdrawing queued message"
+  | "reordering queued messages"
+  | "steering queued message"
   | "steering run"
   | "stopping run"
   | "configuring model";
@@ -111,7 +115,7 @@ export type PiRuntimeEvent = {
   fatal?: boolean;
 };
 
-export type PiQueuedMessageStatus = "pending" | "processing" | "withdrawn";
+export type PiQueuedMessageStatus = "pending" | "processing" | "steered" | "withdrawn";
 
 export type PiQueuedMessage = {
   id: string;
@@ -121,6 +125,7 @@ export type PiQueuedMessage = {
   status: PiQueuedMessageStatus;
   createdAt: string;
   processingStartedAt?: string;
+  steeredAt?: string;
   withdrawnAt?: string;
 };
 
@@ -148,6 +153,7 @@ export type PiSessionState = {
   summary?: PiRuntimeSummary;
   modelControls?: RuntimeModelControls;
   contextUsage?: RuntimeContextUsage;
+  followUpMode?: RuntimeFollowUpMode;
   updatedAt: string;
 };
 
@@ -187,6 +193,27 @@ export type WithdrawQueuedMessageInput = {
   piSessionId: string;
   queuedMessageId: string;
 };
+
+export type ReorderQueuedMessagesInput = {
+  piSessionId: string;
+  orderedIds: string[];
+};
+
+export type SteerFromQueueInput = {
+  piSessionId: string;
+  queuedMessageId: string;
+};
+
+export type ReorderQueuedMessagesResult =
+  | {
+      ok: true;
+      queuedMessages: PiQueuedMessage[];
+    }
+  | {
+      ok: false;
+      queuedMessages: PiQueuedMessage[];
+      error: string;
+    };
 
 export type SteerRunInput = {
   piSessionId: string;
@@ -240,7 +267,9 @@ export type PiRuntimeBridge = {
   createPiSessionState(input: CreatePiSessionStateInput): Promise<PiSessionState>;
   sendInitialPrompt(input: SendInitialPromptInput): Promise<PiRuntimeAcceptedPrompt>;
   queueFollowUp(input: QueueFollowUpInput): Promise<PiQueuedMessage>;
-  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<PiQueuedMessage>;
+  withdrawQueuedMessage(input: WithdrawQueuedMessageInput): Promise<ReorderQueuedMessagesResult>;
+  reorderQueuedMessages(input: ReorderQueuedMessagesInput): Promise<ReorderQueuedMessagesResult>;
+  steerFromQueue(input: SteerFromQueueInput): Promise<ReorderQueuedMessagesResult>;
   steerRun(input: SteerRunInput): Promise<PiRuntimeEvent>;
   abortRun(input: AbortRunInput): Promise<PiRuntimeEvent>;
   configureModel?(input: ConfigureModelInput): Promise<RuntimeModelControls>;
@@ -298,5 +327,6 @@ export function cloneSessionState(state: PiSessionState): PiSessionState {
         }
       : undefined,
     contextUsage: state.contextUsage ? { ...state.contextUsage } : undefined,
+    ...(state.followUpMode ? { followUpMode: state.followUpMode } : {}),
   };
 }

@@ -1167,10 +1167,34 @@ details[open] > .chain-of-thought-rail__tool-row .chain-of-thought-rail__disclos
    First paint of an already-queued row stays idle. */
 
 .chat-queued-message {
+  position: relative;
   opacity: 1;
   transition:
     opacity 200ms cubic-bezier(0.32, 0.72, 0, 1),
     transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.chat-queued-message[data-dragging] {
+  opacity: 0.45;
+}
+
+.chat-queued-message[data-drop-target="before"]::before,
+.chat-queued-message[data-drop-target="after"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: var(--spacing-0-5);
+  background: var(--primary);
+  pointer-events: none;
+}
+
+.chat-queued-message[data-drop-target="before"]::before {
+  top: 0;
+}
+
+.chat-queued-message[data-drop-target="after"]::after {
+  bottom: 0;
 }
 
 .chat-queued-message__body {
@@ -1180,7 +1204,8 @@ details[open] > .chain-of-thought-rail__tool-row .chain-of-thought-rail__disclos
     opacity 150ms var(--ease-standard);
 }
 
-.chat-queued-message[data-withdrawn] .chat-queued-message__body {
+.chat-queued-message[data-withdrawn] .chat-queued-message__body,
+.chat-queued-message[data-steered] .chat-queued-message__body {
   color: var(--color-text-secondary);
 }
 

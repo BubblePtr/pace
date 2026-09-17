@@ -60,6 +60,21 @@ describe("ChatQueuedMessage", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("renders the steered state without actions", () => {
+    render(
+      <ChatQueuedMessage
+        body="Promoted task"
+        isSteered
+        onSteer={() => {}}
+        onWithdraw={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Steered")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-steered", "");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("exposes list presence on the row so enter/exit can be CSS-driven", () => {
     render(
       <ChatQueuedMessage body="Queued task" presence="enter" onWithdraw={() => {}} />,
@@ -69,5 +84,26 @@ describe("ChatQueuedMessage", () => {
       "data-presence",
       "enter",
     );
+  });
+
+  it("marks the dragging and drop-target states used by waiting-area reorder", () => {
+    const { rerender } = render(
+      <ChatQueuedMessage body="Queued task" isDragging onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-dragging");
+
+    rerender(
+      <ChatQueuedMessage body="Queued task" dropTarget="before" onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-drop-target", "before");
+    expect(screen.getByTestId("chat-queued-message")).not.toHaveAttribute("data-dragging");
+
+    rerender(
+      <ChatQueuedMessage body="Queued task" dropTarget="after" onWithdraw={() => {}} />,
+    );
+
+    expect(screen.getByTestId("chat-queued-message")).toHaveAttribute("data-drop-target", "after");
   });
 });

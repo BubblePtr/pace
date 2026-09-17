@@ -247,6 +247,7 @@ export async function createSessionFromDraft(
         piSessionId: piState.piSessionId,
         summary: piState.summary,
         modelControls: piState.modelControls,
+        followUpMode: piState.followUpMode,
         occurredAt: now(),
       }),
     );

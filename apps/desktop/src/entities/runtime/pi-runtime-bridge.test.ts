@@ -228,8 +228,8 @@ describe("Pi Runtime Bridge contract", () => {
         queuedMessageId: queued.id,
       }),
     ).resolves.toMatchObject({
-      id: queued.id,
-      status: "withdrawn",
+      ok: true,
+      queuedMessages: [expect.objectContaining({ id: queued.id, status: "withdrawn" })],
     });
   });
 

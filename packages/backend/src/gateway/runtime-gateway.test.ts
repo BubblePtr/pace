@@ -120,12 +120,44 @@ function createFakeRuntimeDriver(): PiRuntimeDriver & {
     },
     async withdrawQueuedMessage(input) {
       return {
-        id: input.queuedMessageId,
-        piSessionId: input.piSessionId,
-        body: "queued",
-        status: "withdrawn",
-        createdAt: "2026-06-29T12:00:00.000Z",
-        withdrawnAt: "2026-06-29T12:00:00.000Z",
+        ok: true as const,
+        queuedMessages: [
+          {
+            id: input.queuedMessageId,
+            piSessionId: input.piSessionId,
+            body: "queued",
+            status: "withdrawn" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+            withdrawnAt: "2026-06-29T12:00:00.000Z",
+          },
+        ],
+      };
+    },
+    async reorderQueuedMessages(input) {
+      return {
+        ok: true as const,
+        queuedMessages: input.orderedIds.map((id, index) => ({
+          id,
+          piSessionId: input.piSessionId,
+          body: `queued-${index}`,
+          status: "pending" as const,
+          createdAt: "2026-06-29T12:00:00.000Z",
+        })),
+      };
+    },
+    async steerFromQueue(input) {
+      return {
+        ok: true as const,
+        queuedMessages: [
+          {
+            id: input.queuedMessageId,
+            piSessionId: input.piSessionId,
+            body: "queued",
+            status: "steered" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+            steeredAt: "2026-06-29T12:00:00.000Z",
+          },
+        ],
       };
     },
     async steerRun(input) {
@@ -516,6 +548,112 @@ describe("Runtime Gateway service", () => {
       message: "Focus on the screenshot",
       images,
     });
+  });
+
+  it.each([
+    {
+      name: "a successful promotion",
+      result: {
+        ok: true as const,
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-1",
+            body: "Focus on B",
+            status: "steered" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+            steeredAt: "2026-06-29T12:00:01.000Z",
+          },
+        ],
+      },
+      expectEvent: true,
+    },
+    {
+      name: "an ok:false result that still marked the target steered",
+      result: {
+        ok: false as const,
+        error: "follow-up replay failed",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-1",
+            body: "Focus on B",
+            status: "steered" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+            steeredAt: "2026-06-29T12:00:01.000Z",
+          },
+        ],
+      },
+      expectEvent: true,
+    },
+    {
+      name: "a failed promotion",
+      result: {
+        ok: false as const,
+        error: "steer failed",
+        queuedMessages: [
+          {
+            id: "queued-b",
+            piSessionId: "pi-session-1",
+            body: "Focus on B",
+            status: "pending" as const,
+            createdAt: "2026-06-29T12:00:00.000Z",
+          },
+        ],
+      },
+      expectEvent: false,
+    },
+  ])("journals a steer control event after steer_from_queue only for $name", async ({
+    result,
+    expectEvent,
+  }) => {
+    const driver = createFakeRuntimeDriver();
+    vi.spyOn(driver, "steerFromQueue").mockResolvedValue(result);
+    const journal = createInMemorySessionEventJournal();
+    const service = createRuntimeGatewayService({
+      driver,
+      journal,
+      now: () => "2026-06-29T12:00:00.000Z",
+      idFactory: () => "evt-steer",
+    });
+
+    await service.handleRequest({
+      id: "req-create",
+      method: "create_session",
+      params: {
+        sessionId: "app-session-1",
+        projectId: "pig",
+        cwd: "/repo",
+      },
+    });
+    await service.handleRequest({
+      id: "req-steer-from-queue",
+      method: "steer_from_queue",
+      params: {
+        piSessionId: "pi-session-1",
+        queuedMessageId: "queued-b",
+      },
+    });
+
+    const steerEvents = (await journal.read("pi-session-1")).filter(
+      (event) => event.payload.kind === "control" && event.payload.title === "Steer",
+    );
+    if (expectEvent) {
+      expect(steerEvents).toEqual([
+        expect.objectContaining({
+          type: "control",
+          piSessionId: "pi-session-1",
+          payload: expect.objectContaining({
+            kind: "control",
+            role: "user",
+            title: "Steer",
+            body: "Focus on B",
+          }),
+        }),
+      ]);
+    } else {
+      expect(steerEvents).toEqual([]);
+    }
   });
 
   it("accepts an image-only send_prompt", async () => {
