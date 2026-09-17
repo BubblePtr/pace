@@ -57,6 +57,8 @@ export type SessionProjection = {
   // drive status for bridges that don't speak the new model yet.
   runtimeModel: SessionRuntimeModel;
   queuedMessages: PiQueuedMessage[];
+  // Consumed ids whose enqueue echo has not arrived yet — apply as processing on add.
+  pendingConsumedIds: Readonly<Record<string, string>>;
   summary: PiRuntimeSummary;
   modelControls: RuntimeModelControls | null;
   // Live context-window occupancy; null until the runtime first reports it.
@@ -128,11 +130,6 @@ export type SessionProjectionEvent =
       type: "queued-message-withdrawn";
       queuedMessageId: string;
       occurredAt: string;
-    }
-  | {
-      type: "queued-message-processing-started";
-      queuedMessageId: string;
-      event: PiRuntimeEvent;
     }
   | {
       type: "queued-messages-reordered";
@@ -217,6 +214,7 @@ export function createSessionProjection(
     runtimeEvents: [],
     runtimeModel: createSessionRuntimeModel(),
     queuedMessages: [],
+    pendingConsumedIds: {},
     summary: {
       provider: null,
       model: null,
@@ -359,41 +357,44 @@ function unreadResultFromRuntimeEvent(
   return event.role === "assistant" ? true : projection.unreadResult;
 }
 
-function queuedMessageProcessingIndex(
-  projection: SessionProjection,
-  event: PiRuntimeEvent,
+function queuedMessagesAfterConsumed(
+  queuedMessages: SessionProjection["queuedMessages"],
+  queuedMessageId: string,
+  consumedAt: string,
 ) {
-  if (event.kind !== "message" || event.role !== "user") {
-    return -1;
-  }
-
-  return projection.queuedMessages.findIndex(
-    (queuedMessage) =>
-      queuedMessage.status === "pending" &&
-      queuedMessage.piSessionId === event.piSessionId &&
-      queuedMessage.body === event.body,
-  );
-}
-
-function queuedMessagesAfterRuntimeEvent(
-  projection: SessionProjection,
-  event: PiRuntimeEvent,
-) {
-  const processingIndex = queuedMessageProcessingIndex(projection, event);
-
-  if (processingIndex === -1) {
-    return projection.queuedMessages;
-  }
-
-  return projection.queuedMessages.map((queuedMessage, index) =>
-    index === processingIndex
+  return queuedMessages.map((queuedMessage) =>
+    queuedMessage.id === queuedMessageId && queuedMessage.status === "pending"
       ? {
           ...queuedMessage,
           status: "processing" as const,
-          processingStartedAt: event.timestamp,
+          processingStartedAt: consumedAt,
         }
       : queuedMessage,
   );
+}
+
+function applyQueuedMessageConsumed(
+  queuedMessages: SessionProjection["queuedMessages"],
+  pendingConsumedIds: SessionProjection["pendingConsumedIds"],
+  queuedMessageId: string,
+  consumedAt: string,
+  rememberUnmatched = true,
+): Pick<SessionProjection, "queuedMessages" | "pendingConsumedIds"> {
+  if (queuedMessages.some((queuedMessage) => queuedMessage.id === queuedMessageId)) {
+    return {
+      queuedMessages: queuedMessagesAfterConsumed(queuedMessages, queuedMessageId, consumedAt),
+      pendingConsumedIds,
+    };
+  }
+
+  if (!rememberUnmatched || pendingConsumedIds[queuedMessageId]) {
+    return { queuedMessages, pendingConsumedIds };
+  }
+
+  return {
+    queuedMessages,
+    pendingConsumedIds: { ...pendingConsumedIds, [queuedMessageId]: consumedAt },
+  };
 }
 
 // Gateway-minted chat events (user echo, steer control, driver/renderer
@@ -559,19 +560,33 @@ export function applySessionProjectionEvent(
           : projection.lastUserMessageAt,
         runtimeEvents: upsertRuntimeEvent(projection.runtimeEvents, event.event),
         runtimeModel: runtimeModelAfterLegacyEvent(projection.runtimeModel, event.event),
-        queuedMessages: queuedMessagesAfterRuntimeEvent(projection, event.event),
         summary: mergeRuntimeSummary(projection.summary, event.event.summary),
         unreadResult: unreadResultFromRuntimeEvent(projection, event.event),
         updatedAt: event.event.timestamp,
       };
     case "agent-event-received": {
+      const agentEvent = event.entry.event;
+      const consumed =
+        agentEvent.type === "queued-message-consumed"
+          ? applyQueuedMessageConsumed(
+              projection.queuedMessages,
+              projection.pendingConsumedIds,
+              agentEvent.queuedMessageId,
+              agentEvent.consumedAt,
+            )
+          : null;
+      const queuedMessages = consumed?.queuedMessages ?? projection.queuedMessages;
+      const pendingConsumedIds = consumed?.pendingConsumedIds ?? projection.pendingConsumedIds;
       const runtimeModel = applyAgentRuntimeEvent(projection.runtimeModel, event.entry);
 
-      if (runtimeModel === projection.runtimeModel) {
+      if (
+        runtimeModel === projection.runtimeModel &&
+        queuedMessages === projection.queuedMessages &&
+        pendingConsumedIds === projection.pendingConsumedIds
+      ) {
         return projection;
       }
 
-      const agentEvent = event.entry.event;
       const finalizedAssistantAnswer =
         agentEvent.type === "message" &&
         agentEvent.phase === "end" &&
@@ -590,6 +605,8 @@ export function applySessionProjectionEvent(
           agentEvent.type === "context_usage"
             ? { ...agentEvent.usage }
             : projection.contextUsage,
+        queuedMessages,
+        pendingConsumedIds,
         unreadResult: finalizedAssistantAnswer ? true : projection.unreadResult,
         updatedAt: event.entry.timestamp,
       };
@@ -614,16 +631,27 @@ export function applySessionProjectionEvent(
         unreadResult: true,
         updatedAt: event.event.timestamp,
       };
-    case "queued-message-added":
+    case "queued-message-added": {
+      const consumedAt = projection.pendingConsumedIds[event.queuedMessage.id];
+      const queuedMessage =
+        consumedAt !== undefined
+          ? {
+              ...event.queuedMessage,
+              status: "processing" as const,
+              processingStartedAt: consumedAt,
+            }
+          : { ...event.queuedMessage };
+      const pendingConsumedIds = { ...projection.pendingConsumedIds };
+      delete pendingConsumedIds[event.queuedMessage.id];
+
       return {
         ...projection,
         lastUserMessageAt: maxIsoTimestamp(projection.lastUserMessageAt, event.queuedMessage.createdAt),
-        queuedMessages: [
-          ...projection.queuedMessages,
-          { ...event.queuedMessage },
-        ],
+        queuedMessages: [...projection.queuedMessages, queuedMessage],
+        pendingConsumedIds,
         updatedAt: event.queuedMessage.createdAt,
       };
+    }
     case "queued-message-withdrawn":
       return {
         ...projection,
@@ -643,22 +671,6 @@ export function applySessionProjectionEvent(
           };
         }),
         updatedAt: event.occurredAt,
-      };
-    case "queued-message-processing-started":
-      return {
-        ...projection,
-        runtimeEvents: upsertRuntimeEvent(projection.runtimeEvents, event.event),
-        runtimeModel: runtimeModelAfterLegacyEvent(projection.runtimeModel, event.event),
-        queuedMessages: projection.queuedMessages.map((queuedMessage) =>
-          queuedMessage.id === event.queuedMessageId
-            ? {
-                ...queuedMessage,
-                status: "processing",
-                processingStartedAt: event.event.timestamp,
-              }
-            : queuedMessage,
-        ),
-        updatedAt: event.event.timestamp,
       };
     case "queued-messages-reordered": {
       const byId = new Map(
@@ -791,6 +803,22 @@ export function applySessionProjectionEvent(
       const runtimeModel =
         driverIdle && !hasNewerLiveEvents ? settleOpenRuns(replayed) : replayed;
       const runtimeEvents = normalizedRuntimeEvents(event.state.events);
+      let queuedMessages = projection.queuedMessages;
+      let pendingConsumedIds = projection.pendingConsumedIds;
+      for (const step of event.state.replay ?? []) {
+        if (step.kind !== "agent" || step.entry.event.type !== "queued-message-consumed") {
+          continue;
+        }
+        const applied = applyQueuedMessageConsumed(
+          queuedMessages,
+          pendingConsumedIds,
+          step.entry.event.queuedMessageId,
+          step.entry.event.consumedAt,
+          false,
+        );
+        queuedMessages = applied.queuedMessages;
+        pendingConsumedIds = applied.pendingConsumedIds;
+      }
       // Resume snapshots stamp updatedAt=now(); list time must stay on last
       // message, not last open (DF-010).
       const resyncedProjection: SessionProjection = {
@@ -823,6 +851,8 @@ export function applySessionProjectionEvent(
           ? { ...event.state.contextUsage }
           : projection.contextUsage,
         followUpMode: event.state.followUpMode ?? projection.followUpMode,
+        queuedMessages,
+        pendingConsumedIds,
         stale: false,
         staleReason: null,
       };

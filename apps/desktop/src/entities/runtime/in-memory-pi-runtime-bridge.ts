@@ -7,6 +7,7 @@ import {
   PiRuntimeBridgeError,
   cloneSessionState,
   defaultRuntimeSummary,
+  type AgentRuntimeEventEntry,
   type PiQueuedMessage,
   type PiRuntimeBridge,
   type PiRuntimeEvent,
@@ -18,6 +19,7 @@ import {
 
 export type InMemoryPiRuntimeBridge = PiRuntimeBridge & {
   restoreSessionState(state: PiSessionState): Promise<PiSessionState>;
+  consumeQueuedMessage(queuedMessageId: string): void;
 };
 
 type InMemoryBridgeFailurePoint =
@@ -43,10 +45,12 @@ export function createInMemoryPiRuntimeBridge(
   const states = new Map<string, PiSessionState>();
   const queuedMessages = new Map<string, PiQueuedMessage>();
   const listeners = new Map<string, Set<(event: PiRuntimeEvent) => void>>();
+  const agentListeners = new Map<string, Set<(entry: AgentRuntimeEventEntry) => void>>();
   let runtimeCounter = 0;
   let sessionCounter = 0;
   let eventCounter = 0;
   let queuedMessageCounter = 0;
+  let agentSeq = 0;
 
   const fail = (stage: RuntimeBridgeFailureStage): never => {
     throw new PiRuntimeBridgeError({
@@ -392,6 +396,47 @@ export function createInMemoryPiRuntimeBridge(
       return () => {
         sessionListeners.delete(listener);
       };
+    },
+
+    subscribeToAgentEvents(piSessionId, listener) {
+      const sessionListeners = agentListeners.get(piSessionId) ?? new Set();
+
+      sessionListeners.add(listener);
+      agentListeners.set(piSessionId, sessionListeners);
+
+      return () => {
+        sessionListeners.delete(listener);
+      };
+    },
+
+    consumeQueuedMessage(queuedMessageId) {
+      const queuedMessage = queuedMessages.get(queuedMessageId);
+
+      if (!queuedMessage || queuedMessage.status !== "pending") {
+        return;
+      }
+
+      const consumedAt = now();
+      queuedMessages.set(queuedMessageId, {
+        ...queuedMessage,
+        status: "processing",
+        processingStartedAt: consumedAt,
+      });
+      agentSeq += 1;
+      const entry: AgentRuntimeEventEntry = {
+        seq: agentSeq,
+        timestamp: consumedAt,
+        event: {
+          type: "queued-message-consumed",
+          queuedMessageId,
+          consumedAt,
+          surface: "hidden",
+          origin: "sdk",
+        },
+      };
+      for (const listener of agentListeners.get(queuedMessage.piSessionId) ?? []) {
+        listener(entry);
+      }
     },
   };
 }

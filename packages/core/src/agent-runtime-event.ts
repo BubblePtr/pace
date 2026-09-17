@@ -160,6 +160,13 @@ export type AgentRuntimeEvent =
       surface: "hidden";
       origin: AgentEventOrigin;
     }
+  | {
+      type: "queued-message-consumed";
+      queuedMessageId: string;
+      consumedAt: string;
+      surface: "hidden";
+      origin: AgentEventOrigin;
+    }
   // Plugin-owned child conversation. Hidden: never a chat bubble or Trajectory
   // row. Consumers join it to the parent Agent Tool Call by ownerToolCallId.
   | {
