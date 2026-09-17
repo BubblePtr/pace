@@ -133,6 +133,70 @@ describe("Pi SDK public runtime adapter", () => {
     runtime.dispose?.();
   });
 
+  const autoTitleSession = (overrides: Record<string, unknown>) => {
+    const model = { provider: "custom", id: "current", name: "Current", reasoning: false };
+    const session = {
+      sessionId: "pi-auto-title", sessionName: "", isStreaming: false, messages: [], model,
+      setSessionName: vi.fn(function (this: { sessionName: string }, name: string) { this.sessionName = name; }),
+      prompt: vi.fn(async () => {}), abort: vi.fn(async () => {}), dispose: vi.fn(),
+      subscribe(listener: (event: unknown) => void) { emitToSession = listener; return vi.fn(); },
+      ...overrides,
+    };
+
+    return session;
+  };
+  let emitToSession: (event: unknown) => void = () => {};
+  const messageEnd = (role: string, text: string) => ({ type: "message_end", message: { role, content: [{ type: "text", text }] } });
+
+  it("names an untitled session from the first reply using the session's current model", async () => {
+    const complete = vi.fn(async () => ({ content: [{ type: "text", text: '"Wire up the session dock."' }] }));
+    const session = autoTitleSession({ modelRuntime: { complete } });
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) } })({ sessionId: "app-auto-title", projectId: "p", cwd: "/repo" });
+
+    emitToSession(messageEnd("user", "wire up the session dock"));
+    emitToSession(messageEnd("assistant", "Done — the dock now mounts."));
+
+    await vi.waitFor(() => expect(session.setSessionName).toHaveBeenCalledWith("Wire up the session dock"));
+    expect(complete).toHaveBeenCalledWith(
+      session.model,
+      { messages: [expect.objectContaining({ role: "user", content: [{ type: "text", text: expect.stringContaining("wire up the session dock") }] })] },
+      expect.objectContaining({ reasoningEffort: "low", cacheRetention: "none", sessionId: expect.any(String) }),
+    );
+    await runtime.dispose?.();
+  });
+
+  it("leaves an already named session alone", async () => {
+    const complete = vi.fn();
+    const session = autoTitleSession({ sessionName: "Named by an extension", modelRuntime: { complete } });
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) } })({ sessionId: "app-named", projectId: "p", cwd: "/repo" });
+
+    emitToSession(messageEnd("user", "wire up the session dock"));
+    emitToSession(messageEnd("assistant", "Done."));
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(session.setSessionName).not.toHaveBeenCalled();
+    await runtime.dispose?.();
+  });
+
+  it("swallows a naming failure and does not retry it on later replies", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const complete = vi.fn(async () => { throw new Error("provider is down"); });
+    const session = autoTitleSession({ modelRuntime: { complete } });
+    const runtime = await createPublicPiSdkRuntimeFactory({ sdk: { createAgentSession: async () => ({ session }) } })({ sessionId: "app-failing", projectId: "p", cwd: "/repo" });
+
+    emitToSession(messageEnd("user", "wire up the session dock"));
+    emitToSession(messageEnd("assistant", "Done."));
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+
+    emitToSession(messageEnd("user", "now add tests"));
+    emitToSession(messageEnd("assistant", "Tests added."));
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(session.setSessionName).not.toHaveBeenCalled();
+    warn.mockRestore();
+    await runtime.dispose?.();
+  });
+
   it("adapts a public SDK AgentSession to the PiRuntimeDriver runtime contract", async () => {
     const listeners: Array<(event: unknown) => void> = [];
     const prompt = vi.fn(async () => {});

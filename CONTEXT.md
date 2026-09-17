@@ -69,7 +69,7 @@ Trajectory Cockpit 中当前被检视的步骤位置：Ledger 中的选中行、
 _Avoid_: Selection, cursor, focus row
 
 **Session**:
-一条已提交、可运行、可恢复、可归档的 Pi 交互工作单元，归属某个 Project 或 Chat Workspace。实现上，一个 Session 对应一个 Agent Run 及其 Execution Checkout，并持续沉淀 Session Trajectory。Session 的运行真相属于 Pi Runtime；Pace 保存的是用于 UI、索引和生命周期管理的 Session Projection。`projectId` 仍是必填字符串：Project Session 用规范化绝对路径，Chat Session 用哨兵 `"chat"`。
+一条已提交、可运行、可恢复、可归档的 Pi 交互工作单元，归属某个 Project 或 Chat Workspace。实现上，一个 Session 对应一个 Agent Run 及其 Execution Checkout，并持续沉淀 Session Trajectory。Session 的运行真相属于 Pi Runtime；Pace 保存的是用于 UI、索引和生命周期管理的 Session Projection。`projectId` 仍是必填字符串：Project Session 用规范化绝对路径，Chat Session 用哨兵 `"chat"`。未命名的 Session 由 Pace 在首条助手回复后用当前模型自动取名一次（写回 Pi 的 `setSessionName`）；用户或 Pi 扩展已给出的名字不会被覆盖。
 _Avoid_: Task, workspace, trace-only session, draft prompt, nullable-projectId
 
 **Chat Session**:
