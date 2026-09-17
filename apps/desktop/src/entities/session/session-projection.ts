@@ -12,6 +12,7 @@ import {
   applyAgentRuntimeEvent,
   createSessionRuntimeModel,
   sessionStatusFromRuntimeModel,
+  settleOpenRuns,
   type AgentRuntimeEventInput,
   type SessionRuntimeModel,
 } from "@/entities/session/session-runtime-model";
@@ -698,12 +699,21 @@ export function applySessionProjectionEvent(
         staleReason: event.reason,
       };
     case "runtime-state-resynced": {
-      const runtimeModel = runtimeModelFromReplay(projection.runtimeModel, event.state);
+      const replayed = runtimeModelFromReplay(projection.runtimeModel, event.state);
       const snapshotSeq = (event.state.replay ?? []).reduce(
         (latest, step) => Math.max(latest, step.kind === "agent" ? step.entry.seq : step.seq),
         0,
       );
       const hasNewerLiveEvents = projection.runtimeModel.lastSeq > snapshotSeq;
+      // The driver is the authority on what is running now: a journal whose
+      // `run(end)` never made it to disk would otherwise keep a dead run's
+      // Chain of Thought live the moment the Session becomes executable again
+      // (#170). Live deltas the snapshot predates are the one exception — the
+      // run they opened is younger than the state being reported.
+      const driverIdle =
+        event.state.executionState === "cold" || event.state.status !== "running";
+      const runtimeModel =
+        driverIdle && !hasNewerLiveEvents ? settleOpenRuns(replayed) : replayed;
       const runtimeEvents = normalizedRuntimeEvents(event.state.events);
       // Resume snapshots stamp updatedAt=now(); list time must stay on last
       // message, not last open (DF-010).

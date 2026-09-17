@@ -18,7 +18,10 @@ import type { SessionStatus } from "./session-projection";
 export type SessionRuntimeRun = {
   runId: string;
   trigger: AgentRunTrigger;
-  outcome?: AgentRunOutcome;
+  // `interrupted` is minted by this projection for a run whose `run(end)`
+  // never arrived — the Pi process died between the last message and
+  // `agent_end`. It never travels the protocol and never reaches Pi's log.
+  outcome?: AgentRunOutcome | "interrupted";
   startedAt: string;
   endedAt?: string;
 };
@@ -215,6 +218,37 @@ function upsertPart(
   return parts.map((part, index) => (index === existingIndex ? next : part));
 }
 
+/**
+ * Closes every run the event stream left without a `run(end)`, as
+ * `interrupted`. Pi's journal keeps the truncated truth; this is the
+ * projection admitting that a run whose process is gone is not still thinking.
+ *
+ * The caller owns the proof that nothing is running — a newer `run(start)`, or
+ * a resumed driver reporting no Active Run. Calling it while a run really is
+ * live would freeze that run's Chain of Thought.
+ */
+export function settleOpenRuns(model: SessionRuntimeModel): SessionRuntimeModel {
+  const open = [...model.runs.values()].filter((run) => !run.endedAt);
+
+  if (open.length === 0) {
+    return model;
+  }
+
+  const runs = new Map(model.runs);
+
+  for (const run of open) {
+    // Close it at the last thing the stream carried, not at the moment we
+    // notice: a journal cut off yesterday must not report a day-long run.
+    runs.set(run.runId, {
+      ...run,
+      endedAt: model.updatedAt ?? run.startedAt,
+      outcome: "interrupted",
+    });
+  }
+
+  return { ...model, runs };
+}
+
 export function applyAgentRuntimeEvent(
   model: SessionRuntimeModel,
   input: AgentRuntimeEventInput,
@@ -230,7 +264,10 @@ export function applyAgentRuntimeEvent(
 
   switch (event.type) {
     case "run": {
-      const runs = new Map(model.runs);
+      // A Session has at most one Active Run (CONTEXT.md, "Active Run"), so
+      // starting one proves any run still open was cut off rather than
+      // running — otherwise its Chain of Thought stays live beside the new one.
+      const runs = new Map(event.phase === "start" ? settleOpenRuns(model).runs : model.runs);
 
       if (event.phase === "start") {
         runs.set(event.runId, {

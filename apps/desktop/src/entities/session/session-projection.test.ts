@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PiSessionState } from "@/entities/runtime/pi-runtime-bridge";
+import { deriveCotView } from "@/entities/session/cot-view";
 import {
   applySessionProjectionEvent,
   canArchiveSessionProjection,
@@ -48,6 +49,51 @@ describe("Session Projection state", () => {
       ...start, seq: 4, event: { ...start.event, runId: "run-2", phase: "end", outcome: "completed" },
     } });
     expect(finished.status).toBe("completed");
+  });
+
+  it("settles a run the journal left open once the resumed driver reports no Active Run", () => {
+    // Pi was killed between message(end) and agent_end, so the journal has no
+    // run(end) for run-1. Resuming for execution must not bring that dead run
+    // back to life (#170).
+    const turnId = "run-1:turn-1";
+    const messageId = `${turnId}:msg-1`;
+    const replay: NonNullable<PiSessionState["replay"]> = [
+      { kind: "agent", entry: { seq: 1, timestamp: "2026-09-16T09:00:00.000Z", event: {
+        type: "run", phase: "start", runId: "run-1", trigger: "prompt", origin: "sdk", surface: "hidden",
+      } } },
+      { kind: "agent", entry: { seq: 2, timestamp: "2026-09-16T09:00:01.000Z", event: {
+        type: "message", phase: "start", runId: "run-1", turnId, messageId,
+        role: "assistant", origin: "sdk", surface: "chat",
+      } } },
+      { kind: "agent", entry: { seq: 3, timestamp: "2026-09-16T09:00:05.000Z", event: {
+        type: "message", phase: "end", runId: "run-1", turnId, messageId, role: "assistant",
+        parts: [{ partId: `${messageId}:part-0`, partType: "text", body: "Half an answer" }],
+        origin: "sdk", surface: "chat",
+      } } },
+    ];
+    const state: PiSessionState = { piSessionId: "pi", runtimeId: "runtime", projectId: "p", cwd: "/repo",
+      executionState: "ready", status: "idle", events: [], replay, updatedAt: "2026-09-16T09:00:05.000Z" };
+    const resumed = applySessionProjectionEvent(
+      projection({ piSessionId: "pi", status: "completed" }),
+      { type: "runtime-state-resynced", state },
+    );
+
+    expect(resumed.status).not.toBe("running");
+    expect(resumed.runtimeModel.runs.get("run-1")?.endedAt).toBe("2026-09-16T09:00:05.000Z");
+    expect(resumed.runtimeModel.runs.get("run-1")?.outcome).toBe("interrupted");
+    // Even if something else lets the Session stream again, the dead run's
+    // Chain of Thought stays folded instead of ticking from hours ago.
+    expect(deriveCotView(resumed.runtimeModel, "run-1", { streamingAllowed: true }).phase).toBe("settled");
+
+    const prompted = applySessionProjectionEvent(resumed, { type: "agent-event-received", entry: {
+      seq: 4, timestamp: "2026-09-17T09:00:00.000Z", event: {
+        type: "run", phase: "start", runId: "run-2", trigger: "prompt", origin: "sdk", surface: "hidden",
+      },
+    } });
+
+    expect(prompted.status).toBe("running");
+    expect(deriveCotView(prompted.runtimeModel, "run-1", { streamingAllowed: true }).phase).toBe("settled");
+    expect(deriveCotView(prompted.runtimeModel, "run-2", { streamingAllowed: true }).phase).not.toBe("settled");
   });
 
   it("keeps concurrent sessions in last user message order until the user sends again", () => {
