@@ -25,6 +25,7 @@ import {
   SessionSurfaceTabs,
   type SessionSurfaceTabItem,
 } from "@/shared/ui/session-dock/surface-bar";
+import { describeLoadError } from "@/entities/browser/describe-load-error";
 
 /**
  * Chrome for the embedded browser surface: an address band plus the region the
@@ -411,17 +412,24 @@ function renderViewportBody(
           }
         />
       );
-    case "error":
+    case "error": {
+      // Chromium hands us its raw net-error code (e.g. ERR_CONNECTION_REFUSED);
+      // translate it to plain English but keep the code visible for anyone
+      // who wants to search or report it.
+      const { humanText, rawCode } = describeLoadError(state.message);
+      const description =
+        humanText === rawCode ? humanText : `${humanText} (${rawCode})`;
       return (
         <EmptyState
           actions={<Button label="Retry" size="sm" onClick={onReload} />}
           className="h-full justify-center px-4"
-          description={state.message}
+          description={description}
           icon={<Globe className="size-5 text-muted" />}
           isCompact
           title="The page did not load"
         />
       );
+    }
     case "live":
       // Empty unless a DOM overlay is up: the native view paints over this
       // rect, and its bounds are this element's own `getBoundingClientRect()`.

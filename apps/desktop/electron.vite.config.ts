@@ -86,6 +86,35 @@ const rendererBuild = {
   },
 };
 
+/**
+ * index.html ships a strict, production CSP (no eval, no inline scripts).
+ * The Vite dev server needs more: its HMR client and @vitejs/plugin-react's
+ * Fast Refresh preamble are an inline `<script type="module">`, and source
+ * transforms rely on `eval`. Relax script-src only in dev, only here, so the
+ * packaged app's index.html — and electron-vite's production build of it —
+ * stay untouched.
+ */
+function relaxCspForDevServer(): Plugin {
+  let isDev = false;
+  return {
+    name: "pigui-relax-csp-for-dev-server",
+    configResolved(config) {
+      isDev = config.command === "serve";
+    },
+    transformIndexHtml(html) {
+      if (!isDev) return html;
+      return html.replace(
+        /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")([^"]*)(")/,
+        (_match, prefix: string, content: string, suffix: string) =>
+          `${prefix}${content.replace(
+            "script-src 'self' 'wasm-unsafe-eval'",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+          )}${suffix}`,
+      );
+    },
+  };
+}
+
 const coreAlias = {
   "@pace/core/testing": resolve(__dirname, "../../packages/core/src/testing.ts"),
   "@pace/core": resolve(__dirname, "../../packages/core/src/index.ts"),
@@ -128,7 +157,7 @@ export default defineConfig({
   },
   renderer: {
     root: ".",
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), relaxCspForDevServer()],
     clearScreen: false,
     build: rendererBuild as any,
     resolve: {

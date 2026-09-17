@@ -3,6 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Baseline renderer CSP (shell hygiene, not a security boundary against a
+      compromised Pi process — see ADR-0029). Locked down to same-origin by
+      default:
+      - `script-src` allows `wasm-unsafe-eval` because the Session Dock's
+        Files/Changes diff viewer (`@pierre/diffs` + shiki) instantiates a
+        bundled oniguruma WebAssembly module for syntax highlighting.
+      - `img-src` allows `data:` (browser-tab still snapshots, small inlined
+        assets), `blob:` (composer image attachments, rendered via
+        `URL.createObjectURL`), and `https:` (arbitrary tool-result image
+        URLs shown in the Trajectory inspector).
+      electron.vite.config.ts relaxes script-src further for the dev
+      server's HMR client and React Fast Refresh preamble only — this exact
+      production value ships unmodified.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self';"
+    />
     <title>Pace</title>
   </head>
   <body>
