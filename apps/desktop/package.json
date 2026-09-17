@@ -1,6 +1,6 @@
 {
   "name": "@pace/desktop",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "private": true,
   "license": "Apache-2.0",
   "description": "The GUI for the Pi coding agent.",

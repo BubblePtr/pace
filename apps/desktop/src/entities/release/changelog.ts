@@ -15,6 +15,50 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.12",
+    date: "2026-09-18",
+    title: "Command the queue",
+    summary: "Drag queued follow-ups into order or promote one to steer the run, sessions name themselves, and the Browser starts clean.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.12",
+    changes: [
+      {
+        kind: "added",
+        title: "Reorder and steer from the queue",
+        description: "Drag queued follow-ups into the order you want, or send one straight into the running turn as a steer. Reordering stays off when Pi's follow-up mode is \"all\", where the whole batch goes to the agent anyway.",
+      },
+      {
+        kind: "added",
+        title: "Sessions name themselves",
+        description: "An untitled session gets a name from its first reply, generated on the session's own model — no extension to install.",
+      },
+      {
+        kind: "improved",
+        title: "Browser starts blank",
+        description: "Opening the Browser surface always starts from a clean empty state instead of restoring last session's tabs, and load failures explain themselves in plain English next to the raw error code.",
+      },
+      {
+        kind: "improved",
+        title: "Tighter shell boundaries",
+        description: "The renderer ships a baseline content security policy, and only Pace's own window can invoke app commands — embedded browser tabs are turned away.",
+      },
+      {
+        kind: "fixed",
+        title: "Interrupted runs stay finished",
+        description: "A run cut off when Pi was killed no longer comes back to life with a running clock the next time the session opens; it settles as interrupted.",
+      },
+      {
+        kind: "fixed",
+        title: "Queued consumption tracked by id",
+        description: "Queued follow-ups are reconciled with Pi's queue by message id instead of text matching, so a message the agent picks up is marked processing reliably — even after a cold reload or a retry.",
+      },
+      {
+        kind: "fixed",
+        title: "Packages page polish",
+        description: "The Remove action reads as a secondary button, empty states speak consistently, and the install dialog warns that git installs can take a minute or two.",
+      },
+    ],
+  },
+  {
     version: "0.0.11",
     date: "2026-09-17",
     title: "A cost cockpit",
