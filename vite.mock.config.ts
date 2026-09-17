@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { relaxCspForDevServer } from "./apps/desktop/vite-dev-csp";
 
 export default defineConfig(({ command }) => {
   if (command !== "serve")
@@ -11,6 +12,11 @@ export default defineConfig(({ command }) => {
     plugins: [
       react(),
       tailwindcss(),
+      // This serves the real apps/desktop/index.html (with its strict
+      // production CSP) through Vite's dev server, so it needs the same
+      // dev-only relaxation electron.vite.config.ts applies for `bun run dev`
+      // — otherwise React Fast Refresh's inline preamble script is blocked.
+      relaxCspForDevServer(),
       {
         name: "pace-static-mock-entry",
         transformIndexHtml(html) {

@@ -25,7 +25,7 @@ import {
   SessionSurfaceTabs,
   type SessionSurfaceTabItem,
 } from "@/shared/ui/session-dock/surface-bar";
-import { describeLoadError } from "@/entities/browser/describe-load-error";
+import { describeLoadError } from "./describe-load-error";
 
 /**
  * Chrome for the embedded browser surface: an address band plus the region the

@@ -14,9 +14,10 @@
         assets), `blob:` (composer image attachments, rendered via
         `URL.createObjectURL`), and `https:` (arbitrary tool-result image
         URLs shown in the Trajectory inspector).
-      electron.vite.config.ts relaxes script-src further for the dev
-      server's HMR client and React Fast Refresh preamble only — this exact
-      production value ships unmodified.
+      apps/desktop/vite-dev-csp.ts relaxes script-src further, in every Vite
+      config that serves this file in dev mode, for the dev server's HMR
+      client and React Fast Refresh preamble only — this exact production
+      value ships unmodified.
     -->
     <meta
       http-equiv="Content-Security-Policy"
