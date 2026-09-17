@@ -694,7 +694,14 @@ ipcMain.handle(
     }
 
     if (input.command === "select_local_resource") {
-      return dialog.showOpenDialog({ title: "Add local resource", properties: ["openFile", "openDirectory"], filters: [{ name: "Pi resources", extensions: ["ts", "js", "md", "json"] }] })
+      // openFile + openDirectory together is macOS-only; Windows/Linux only honor
+      // one, so fall back to file selection there (skills are the only directory
+      // resource kind, and they're rarer than single-file extensions/prompts/themes).
+      const properties: Array<"openFile" | "openDirectory"> =
+        process.platform === "darwin" ? ["openFile", "openDirectory"] : ["openFile"];
+      const owner = mainWindow ?? BrowserWindow.getFocusedWindow();
+      const options = { title: "Add local resource", properties, filters: [{ name: "Pi resources", extensions: ["ts", "js", "md", "json"] }] };
+      return (owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options))
         .then(result => result.canceled ? null : result.filePaths[0] ?? null);
     }
 

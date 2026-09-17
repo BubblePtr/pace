@@ -243,6 +243,7 @@ export function PackageManagement({ inventory, children }: { inventory: ConfigIn
     {installOpen && <Dialog isOpen={installOpen} onOpenChange={open => { if (!pending) setInstallOpen(open); }} purpose="form">
       <Layout header={<DialogHeader title="Install package" onOpenChange={open => { if (!pending) setInstallOpen(open); }} />} content={<LayoutContent><form onSubmit={event => { event.preventDefault(); if (!busy.current && /^(npm:|git:|https:\/\/)\S+$/.test(source.trim())) void run("install_package", { source: source.trim() }).then(ok => { if (ok) { setInstallOpen(false); setSource(""); } }); }}><VStack gap={3}>
         <TextInput label="npm package or git URL" description="npm:, git:, or https://. Use Add local resource for local files." value={source} onChange={setSource} isDisabled={pending} />
+        <Text type="supporting">Git installs can take a minute or two; progress is not streamed while it runs.</Text>
         <Text type="supporting">{nextSessionCopy}</Text>
         {error && <Text role="alert" style={{ color: "var(--danger)" }}>{error}</Text>}
         <Button type="submit" label={pending ? "Installing…" : "Install"} variant="primary" isDisabled={pending || !/^(npm:|git:|https:\/\/)\S+$/.test(source.trim())} />
@@ -252,7 +253,7 @@ export function PackageManagement({ inventory, children }: { inventory: ConfigIn
 }
 
 export function ResourceList({ resources }: { resources: ResourceInfo[] }) {
-  if (resources.length === 0) return <EmptyState>No resources loaded</EmptyState>;
+  if (resources.length === 0) return <EmptyState>No resources loaded yet</EmptyState>;
   return (
     <List hasDividers>
       {resources.map(resource => (
@@ -282,7 +283,7 @@ export function ResourceList({ resources }: { resources: ResourceInfo[] }) {
 
 export function PackageList({ packages }: { packages: PackageInfo[] }) {
   const actions = useContext(ActionsContext);
-  if (packages.length === 0) return <EmptyState>Not installed</EmptyState>;
+  if (packages.length === 0) return <EmptyState>No packages installed yet</EmptyState>;
   return (
     <VStack gap={6}>
       {packages.map(pkg => (

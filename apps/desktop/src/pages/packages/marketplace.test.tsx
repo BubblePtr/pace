@@ -176,6 +176,27 @@ it("does not claim updates are current when the check failed", async () => {
   expect(screen.queryByText("You’re all up to date")).not.toBeInTheDocument();
 });
 
+it("does not let a failed update check block other package actions", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "check_package_updates")
+      throw new Error("registry unavailable");
+    if (command === "search_package_catalog") return catalog;
+    return { progress: [] };
+  });
+  view();
+  fireEvent.click(screen.getByRole("button", { name: /Updates/ }));
+  await screen.findByText("Could not check for updates");
+  fireEvent.click(screen.getByRole("button", { name: /Installed · 1/ }));
+  fireEvent.click(screen.getByRole("button", { name: "View Review" }));
+  const dialog = screen.getByRole("dialog", { name: "Review package details" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Update Review" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("update_package", {
+      source: resource.packageSource,
+    }),
+  );
+});
+
 it("appends catalogue pages and applies resource filters to the loaded results", async () => {
   vi.mocked(invoke).mockImplementation(async (command, args) =>
     command !== "search_package_catalog"

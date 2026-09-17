@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it, expect } from "vitest";
@@ -33,5 +33,27 @@ it("associates only the latest session's extension errors with exact resource pa
     await store.save({ sessionId: "clean", piSessionId: "clean", runtimeId: "clean", projectId: "p", cwd: "/", status: "idle", updatedAt: "2026-09-10T00:00:00Z" });
     const clean = await addResourceDiagnostics(inventory, store, createFileSessionEventJournal({ dataDir: dir }));
     expect(clean.extensions.every(resource => !resource.lastError)).toBe(true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it("matches a resource path against a journaled error path through a symlink", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pace-diagnostics-symlink-"));
+  try {
+    const store = createFileSessionProjectionStore({ dataDir: dir });
+    await store.save({ sessionId: "new", piSessionId: "new", runtimeId: "new", projectId: "p", cwd: "/", status: "idle", updatedAt: "2026-09-09T00:00:00Z" });
+    await mkdir(join(dir, "sessions"));
+    // Pi may log the symlink-resolved real path even though the resource is
+    // registered by its symlinked path (e.g. a package linked via `npm link`).
+    const realDir = join(dir, "real");
+    await mkdir(realDir);
+    await writeFile(join(realDir, "tool.ts"), "");
+    const linkPath = join(dir, "linked-tool.ts");
+    await symlink(join(realDir, "tool.ts"), linkPath);
+    const event = { type: "error", ts: "2026-09-09T01:00:00Z", payload: { type: "error", code: "extension_load_error", body: `${join(realDir, "tool.ts")}: symlink target failed` } };
+    await writeFile(join(dir, "sessions/new.jsonl"), JSON.stringify(event));
+    const extensions: ConfigInventory["extensions"] = [{ kind: "extension", name: "linked-tool", path: linkPath, enabled: true, scope: "user", origin: "drop-in" }];
+    const inventory: ConfigInventory = { packages: [], extensions, skills: [], themes: [], promptTemplates: [] };
+    const result = await addResourceDiagnostics(inventory, store, createFileSessionEventJournal({ dataDir: dir }));
+    expect(result.extensions[0].lastError?.message).toBe(`${join(realDir, "tool.ts")}: symlink target failed`);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
