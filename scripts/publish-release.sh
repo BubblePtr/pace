@@ -31,12 +31,38 @@ if (( ${#missing[@]} > 0 )); then
   exit 1
 fi
 
-if [[ "$existing" == true ]]; then
-  gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-else
+if [[ "$existing" != true ]]; then
+  # Create the draft without assets so the upload below is the same retried,
+  # parallel path on the first publish and on re-runs alike.
   args=(--draft --verify-tag --title "Pace $VERSION" --generate-notes)
   if [[ "$PRERELEASE" == true ]]; then args+=(--prerelease); fi
-  gh release create "$RELEASE_TAG" "${assets[@]}" "${args[@]}"
+  gh release create "$RELEASE_TAG" "${args[@]}"
+fi
+
+# Upload bandwidth is throttled per connection and a stalled transfer does not
+# recover on its own, so each asset goes up in parallel with its own retries.
+upload_asset() {
+  local asset=$1
+  for attempt in 1 2 3; do
+    if gh release upload "$RELEASE_TAG" "$asset" --clobber; then
+      return 0
+    fi
+    echo "::warning::Upload of $asset failed (attempt $attempt); retrying." >&2
+  done
+  return 1
+}
+pids=()
+for asset in "${assets[@]}"; do
+  upload_asset "$asset" &
+  pids+=($!)
+done
+failed=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || failed=1
+done
+if (( failed )); then
+  echo '::error::At least one release asset failed to upload.'
+  exit 1
 fi
 
 # Keep incomplete uploads private; only publish after every required asset is present.
