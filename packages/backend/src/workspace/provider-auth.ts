@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { ModelRuntime, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import {
-  PROVIDER_AUTH_CATALOG,
+  PROVIDER_DISPLAY_OVERRIDES,
+  sortProvidersForDisplay,
   type ProviderAuthId,
   type ProviderAuthMode,
   type ProviderAuthStatusItem,
@@ -19,12 +20,19 @@ type AuthInteraction = Parameters<RuntimeInstance["login"]>[2];
 type AuthPrompt = Parameters<AuthInteraction["prompt"]>[0];
 type AuthEvent = Parameters<AuthInteraction["notify"]>[0];
 type StoredCredential = ReturnType<typeof readStoredCredential>;
+type RuntimeProvider = {
+  id: string;
+  name: string;
+  auth: { apiKey?: unknown; oauth?: unknown };
+};
 
 /** Minimal runtime surface so tests can substitute a stub. */
 export type ProviderAuthRuntime = Pick<
   RuntimeInstance,
   "getProviderAuthStatus" | "login" | "logout" | "refresh"
->;
+> & {
+  getProviders(): readonly RuntimeProvider[];
+};
 
 export type ProviderAuthService = {
   listStatus(): Promise<ProviderAuthStatusReport>;
@@ -100,10 +108,13 @@ function keyHintFromCredential(credential: StoredCredential): string | undefined
   return undefined;
 }
 
-function assertKnownProvider(providerId: string): asserts providerId is ProviderAuthId {
-  if (!PROVIDER_AUTH_CATALOG.some((entry) => entry.id === providerId)) {
+function findRuntimeProvider(runtime: ProviderAuthRuntime, providerId: string) {
+  const provider = runtime.getProviders().find((entry) => entry.id === providerId);
+  if (!provider) {
     throw new Error(`Unknown provider "${providerId}".`);
   }
+
+  return provider;
 }
 
 /** A prompt that never settles: browser/device-code flows race a manual-code
@@ -136,23 +147,25 @@ export function createProviderAuthService(
     // Re-read auth.json so logins done in the Pi TUI while Pace is open show up.
     await runtime.refresh({ allowNetwork: false }).catch(() => {});
 
-    const providers: ProviderAuthStatusItem[] = PROVIDER_AUTH_CATALOG.map((entry) => {
-      const credential = readStoredCredential(entry.id, authPath);
-      const mode = modeFromCredential(credential);
-      const status = runtime.getProviderAuthStatus(entry.id);
-      const keyHint = keyHintFromCredential(credential);
+    const providers = sortProvidersForDisplay(
+      runtime.getProviders().map((provider) => {
+        const credential = readStoredCredential(provider.id, authPath);
+        const mode = modeFromCredential(credential);
+        const status = runtime.getProviderAuthStatus(provider.id);
+        const keyHint = keyHintFromCredential(credential);
 
-      return {
-        id: entry.id,
-        label: entry.label,
-        supportsApiKey: entry.supportsApiKey,
-        supportsOAuth: entry.supportsOAuth,
-        mode,
-        configured: status.configured || mode !== "none",
-        ...(keyHint ? { keyHint } : {}),
-        ...(status.label ? { statusLabel: status.label } : {}),
-      };
-    });
+        return {
+          id: provider.id,
+          label: PROVIDER_DISPLAY_OVERRIDES[provider.id] ?? provider.name,
+          supportsApiKey: Boolean(provider.auth.apiKey),
+          supportsOAuth: Boolean(provider.auth.oauth),
+          mode,
+          configured: status.configured || mode !== "none",
+          ...(keyHint ? { keyHint } : {}),
+          ...(status.label ? { statusLabel: status.label } : {}),
+        };
+      }),
+    );
 
     return {
       agentDir: options.agentDir,
@@ -166,10 +179,10 @@ export function createProviderAuthService(
     listStatus,
 
     async setApiKey(providerId, apiKey) {
-      assertKnownProvider(providerId);
-      const entry = PROVIDER_AUTH_CATALOG.find((item) => item.id === providerId)!;
+      const runtime = await getRuntime();
+      const provider = findRuntimeProvider(runtime, providerId);
 
-      if (!entry.supportsApiKey) {
+      if (!provider.auth.apiKey) {
         throw new Error(`Provider "${providerId}" does not support API keys.`);
       }
 
@@ -177,8 +190,6 @@ export function createProviderAuthService(
       if (!trimmed) {
         throw new Error("API key must not be empty.");
       }
-
-      const runtime = await getRuntime();
       // API-key "login" is a stored-credential write: the provider's apiKey
       // login prompt returns the key, which ModelRuntime persists to auth.json.
       await runtime.login(providerId, "api_key", {
@@ -190,21 +201,19 @@ export function createProviderAuthService(
     },
 
     async remove(providerId) {
-      assertKnownProvider(providerId);
       const runtime = await getRuntime();
+      findRuntimeProvider(runtime, providerId);
       await runtime.logout(providerId);
       return listStatus();
     },
 
     async loginOAuth(providerId) {
-      assertKnownProvider(providerId);
-      const entry = PROVIDER_AUTH_CATALOG.find((item) => item.id === providerId)!;
+      const runtime = await getRuntime();
+      const provider = findRuntimeProvider(runtime, providerId);
 
-      if (!entry.supportsOAuth) {
+      if (!provider.auth.oauth) {
         throw new Error(`Provider "${providerId}" does not support subscription login.`);
       }
-
-      const runtime = await getRuntime();
       await runtime.login(providerId, "oauth", {
         prompt: (prompt: AuthPrompt) => {
           // Codex asks browser vs device-code; GUI always takes the browser flow.
@@ -230,8 +239,8 @@ export function createProviderAuthService(
     },
 
     async logout(providerId) {
-      assertKnownProvider(providerId);
       const runtime = await getRuntime();
+      findRuntimeProvider(runtime, providerId);
       await runtime.logout(providerId);
       return listStatus();
     },

@@ -41,6 +41,15 @@ const providerAuthStatus = {
       mode: "none",
       configured: false,
     },
+    {
+      // Label does not contain the id, so an id query cannot pass via label.
+      id: "github-copilot",
+      label: "GitHub Copilot",
+      supportsApiKey: true,
+      supportsOAuth: true,
+      mode: "none",
+      configured: false,
+    },
   ],
 };
 
@@ -532,6 +541,33 @@ describe("Settings — changelog", () => {
     expect(input).toHaveValue("sk-unsaved");
     await user.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(router.state.location.href).toBe("/usage?range=week#totals"));
+  });
+});
+
+describe("Settings — provider API keys", () => {
+  it("filters API key cards by label or id", async () => {
+    const user = userEvent.setup();
+    renderSettings("/usage?settings=providers");
+
+    await user.click(await screen.findByRole("button", { name: "API Key" }));
+    expect(await screen.findByTestId("provider-api-key-anthropic")).toBeVisible();
+    expect(screen.getByTestId("provider-api-key-xai")).toBeVisible();
+    expect(screen.getByTestId("provider-api-key-github-copilot")).toBeVisible();
+
+    await user.type(screen.getByPlaceholderText(/filter/i), "Grok");
+
+    expect(screen.getByTestId("provider-api-key-xai")).toBeVisible();
+    expect(screen.queryByTestId("provider-api-key-anthropic")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-api-key-github-copilot"),
+    ).not.toBeInTheDocument();
+
+    await user.clear(screen.getByPlaceholderText(/filter/i));
+    await user.type(screen.getByPlaceholderText(/filter/i), "github-copilot");
+
+    expect(screen.getByTestId("provider-api-key-github-copilot")).toBeVisible();
+    expect(screen.queryByTestId("provider-api-key-anthropic")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("provider-api-key-xai")).not.toBeInTheDocument();
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   createProviderAuthService,
   type ProviderAuthRuntime,
@@ -12,23 +13,24 @@ async function tempAgentDir() {
 }
 
 describe("provider auth service", () => {
-  it("lists catalog providers with none configured", async () => {
+  it("lists every runtime provider including Radius and Codex auth shapes", async () => {
     const agentDir = await tempAgentDir();
     const service = createProviderAuthService({ agentDir });
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+      allowModelNetwork: false,
+    });
 
     const report = await service.listStatus();
 
-    expect(report.configuredCount).toBe(0);
-    expect(report.providers.map((provider) => provider.id)).toEqual([
-      "openai",
-      "openai-codex",
-      "anthropic",
-      "deepseek",
-      "xai",
-    ]);
-    expect(report.providers.every((provider) => provider.mode === "none")).toBe(true);
-    expect(report.providers.find((provider) => provider.id === "xai")).toMatchObject({
+    expect(report.providers).toHaveLength(runtime.getProviders().length);
+    expect(report.providers.find((provider) => provider.id === "radius")).toMatchObject({
       supportsApiKey: true,
+      supportsOAuth: true,
+    });
+    expect(report.providers.find((provider) => provider.id === "openai-codex")).toMatchObject({
+      supportsApiKey: false,
       supportsOAuth: true,
     });
   });
@@ -104,11 +106,23 @@ describe("provider auth service", () => {
     await expect(service.setApiKey("openai", "   ")).rejects.toThrow(/empty/i);
   });
 
+  it("rejects API keys when Pi reports the provider as oauth-only", async () => {
+    const agentDir = await tempAgentDir();
+    const service = createProviderAuthService({ agentDir });
+
+    await expect(service.setApiKey("openai-codex", "sk-not-a-key")).rejects.toThrow(
+      /does not support API keys/i,
+    );
+  });
+
   it("defaults Codex subscription login to the browser OAuth method", async () => {
     const agentDir = await tempAgentDir();
     let selected: string | undefined;
     const runtime: ProviderAuthRuntime = {
       getProviderAuthStatus: () => ({ configured: false }),
+      getProviders: () => [
+        { id: "openai-codex", name: "OpenAI Codex", auth: { oauth: {} } },
+      ],
       async login(_providerId, _type, interaction) {
         selected = await interaction.prompt({
           type: "select",
@@ -169,6 +183,9 @@ describe("provider auth service", () => {
     const opened: string[] = [];
     const runtime: ProviderAuthRuntime = {
       getProviderAuthStatus: () => ({ configured: false }),
+      getProviders: () => [
+        { id: "xai", name: "xAI", auth: { apiKey: {}, oauth: {} } },
+      ],
       async login(_providerId, _type, interaction) {
         interaction.notify({
           type: "device_code",
