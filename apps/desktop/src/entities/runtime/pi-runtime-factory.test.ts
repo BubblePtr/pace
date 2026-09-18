@@ -43,7 +43,7 @@ describe("default Pi runtime bridge factory", () => {
 
       return {
         sessionId: "session-electron",
-        runtimeId: "pi-rpc:session-electron",
+        runtimeId: "pi-sdk:session-electron",
         piSessionId: "pi-session-electron",
         projectId: "pig",
         cwd: "/Users/void/code/opensource/Pig",
@@ -73,7 +73,7 @@ describe("default Pi runtime bridge factory", () => {
       },
     });
 
-    expect(runtime.runtimeId).toBe("pi-rpc:session-electron");
+    expect(runtime.runtimeId).toBe("pi-sdk:session-electron");
     expect(invocations).toEqual([
       {
         command: "create_session",

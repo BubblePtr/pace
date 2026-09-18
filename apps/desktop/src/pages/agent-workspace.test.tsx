@@ -7094,7 +7094,7 @@ describe("AgentWorkspaceSessionsPage", () => {
         root: "/Users/void/code/opensource/Pig",
         runtimeCwd: "/Users/void/code/opensource/Pig/docs",
       },
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       sessionFile: null,
       runtimeEvents: [
@@ -7195,7 +7195,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       status: "running" as const,
       stale: true,
       staleReason: "runtime event stream disconnected",
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       updatedAt: "2026-06-26T08:00:05.000Z",
     };
@@ -7380,7 +7380,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "completed" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -7463,7 +7463,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "completed" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -7539,7 +7539,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "completed" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -7727,7 +7727,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "completed" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -7798,7 +7798,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "running" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -8137,7 +8137,7 @@ describe("AgentWorkspaceSessionsPage", () => {
       }),
       status: "running" as const,
       creationStage: "accepted" as const,
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-rpc",
       runtimeEvents: [
         {
@@ -8204,7 +8204,7 @@ describe("Context usage placement", () => {
         createdAt: "2026-08-20T08:00:00.000Z",
       }),
       status: "completed" as const,
-      runtimeId: "pi-rpc:session-context",
+      runtimeId: "pi-sdk:session-context",
       piSessionId: "pi-session-context",
       contextUsage: { tokens: 90_000, contextWindow: 200_000, percent: 45 },
       ...overrides,

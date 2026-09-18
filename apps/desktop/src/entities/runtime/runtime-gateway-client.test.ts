@@ -368,7 +368,7 @@ describe("Runtime Gateway client", () => {
     };
     const snapshot: RuntimeGatewaySnapshot = {
       sessionId: "session-1",
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-1",
       projectId: "pig",
       cwd: "/Users/void/code/opensource/Pig",
@@ -470,7 +470,7 @@ describe("Runtime Gateway client", () => {
       },
     ]);
     expect(runtime).toMatchObject({
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       status: "ready",
     });
     expect(state).toMatchObject({
@@ -512,7 +512,7 @@ describe("Runtime Gateway client", () => {
     const images = [{ mimeType: "image/png", data: "abc", name: "shot.png" }];
     const snapshot: RuntimeGatewaySnapshot = {
       sessionId: "session-1",
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-1",
       projectId: "pig",
       cwd: "/Users/void/code/opensource/Pig",
@@ -632,7 +632,7 @@ describe("Runtime Gateway client", () => {
     const eventHandlers: Array<(event: BackendRpcEvent) => void> = [];
     const snapshot: RuntimeGatewaySnapshot = {
       sessionId: "session-1",
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-1",
       projectId: "pig",
       cwd: "/Users/void/code/opensource/Pig",
@@ -704,7 +704,7 @@ describe("Runtime Gateway client", () => {
     const eventHandlers: Array<(event: BackendRpcEvent) => void> = [];
     const snapshot: RuntimeGatewaySnapshot = {
       sessionId: "session-1",
-      runtimeId: "pi-rpc:session-1",
+      runtimeId: "pi-sdk:session-1",
       piSessionId: "pi-session-1",
       projectId: "pig",
       cwd: "/Users/void/code/opensource/Pig",

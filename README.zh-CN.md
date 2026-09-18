@@ -89,7 +89,7 @@ flowchart TB
     subgraph PL["唯一的单向事件流水线"]
       direction LR
       pi["Pi 运行时 — 内嵌<br/>AgentSession · 工具 · 扩展<br/>(agent loop 在这里)"]
-      drv["Driver<br/>pi-sdk 默认 · pi-rpc 已冻结"]
+      drv["Driver<br/>pi-sdk（唯一驱动）"]
       nz["Normalizer<br/>原始事件 → AgentRuntimeEvent"]
       gw["Runtime Gateway<br/>seq + 确定性 run/turn/message id<br/>+ 能力声明"]
       pi --> drv --> nz --> gw
@@ -108,7 +108,7 @@ flowchart TB
   pi -->|"Pi 拥有"| pilog[("Pi 会话 jsonl<br/>~/.pi — 上下文真相")]
 ```
 
-- **Driver（驱动层）**：封装 Pi 运行时。默认使用 SDK Driver；RPC Driver 保留但已冻结（[ADR-0018](docs/adr/0018-runtime-gateway-api-and-pi-drivers.md)）。
+- **Driver（驱动层）**：封装 Pi 运行时。SDK Driver 是唯一的 Pi 驱动，运行在每个根 Session 的独立进程中（[ADR-0040](docs/adr/0040-root-session-process-isolation.md)）；早期的 RPC Driver 已删除（[ADR-0041](docs/adr/0041-remove-pi-rpc-driver.md)）。
 - **Normalizer（标准化层）**：把 Pi 的原始事件转换为统一的 `AgentRuntimeEvent`，附加阶段（Phase）、目标展示区（Surface）和按确定性规则生成的消息 ID（[ADR-0020](docs/adr/0020-agent-runtime-event-model.md)）。基于录制数据的契约测试构成了该协议的可执行规范。
 - **Runtime Gateway（运行时网关）**：渲染层与后端通信的唯一协议接口。接收渲染层发来的控制命令，并向渲染层推送带单调递增序号的事件封装（envelope）。网关声明当前运行时支持的能力，包括模型切换、思考设置、消息排队与执行引导，界面据此提供相应的操作（[ADR-0024](docs/adr/0024-model-thinking-controls-follow-runtime-capabilities.md)）。
 - **Persistence（持久化层）**：维护仅追加、可按时间线回放的 Session Event Journal，以及供列表和统计查询的 Session Projection。

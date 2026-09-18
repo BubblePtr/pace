@@ -12,10 +12,10 @@ apps/desktop/src/
 ├── entities/            # 渲染层领域逻辑（视图侧），按领域粗切片
 │   ├── session/         #   sessions, session-projection, session-creation,
 │   │                    #     session-drafts, usage-aggregation, session-detail.fixtures
-│   ├── runtime/         #   pi-runtime-bridge, pi-rpc-runtime-bridge,
+│   ├── runtime/         #   pi-runtime-bridge, runtime-gateway-client,
 │   │                    #     in-memory-pi-runtime-bridge, pi-runtime-factory
 │   └── checkout/        #   execution-checkout, execution-checkout-client
-├── shared/              # 平台 adapter + 跨切面：runtime, refresh, pi-rpc-transport
+├── shared/              # 平台 adapter + 跨切面：runtime, refresh
 ├── test/                # vitest setup（基础设施，不属层）
 └── fixtures/            # 浏览器/测试 fixture（基础设施，不属层）
 ```

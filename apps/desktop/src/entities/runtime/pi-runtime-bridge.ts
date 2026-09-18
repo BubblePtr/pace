@@ -1,14 +1,7 @@
 // Pi Runtime Bridge — the renderer contract for live Pi sessions. Electron uses
-// the Runtime Gateway adapter by default; the in-memory and legacy RPC adapters
-// remain available for browser fallback and driver-level regression tests.
+// the Runtime Gateway adapter by default; the in-memory adapter is the
+// non-Electron fallback.
 
-export type {
-  PiRpcCommand,
-  PiRpcResponse,
-  PiRpcRawEvent,
-  PiRpcTransportStartInput,
-  PiRpcTransport,
-} from "@pace/core";
 import type {
   AgentRuntimeEvent,
   RuntimeContextUsage,

@@ -1,165 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { PiRuntimeBridgeError } from "@/entities/runtime/pi-runtime-bridge";
 import { createInMemoryPiRuntimeBridge } from "@/entities/runtime/in-memory-pi-runtime-bridge";
-import { createPiRpcRuntimeBridge } from "@/entities/runtime/pi-rpc-runtime-bridge";
-import { createFakePiRpcTransport } from "@pace/core/testing";
 
 describe("Pi Runtime Bridge contract", () => {
-  it("sends the initial prompt through Pi RPC and streams normalized runtime events", async () => {
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      model: {
-        provider: "openai",
-        id: "gpt-5-codex",
-      },
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
-    const bridge = createPiRpcRuntimeBridge({
-      transport,
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
-    const runtime = await bridge.startRuntime({
-      sessionId: "session-1",
-      projectId: "pig",
-      checkout: {
-        mode: "foreground-local",
-        root: "/Users/void/code/opensource/Pig",
-        runtimeCwd: "/Users/void/code/opensource/Pig",
-      },
-    });
-    const state = await bridge.createPiSessionState({
-      runtimeId: runtime.runtimeId,
-      projectId: "pig",
-      cwd: "/Users/void/code/opensource/Pig",
-    });
-    const observedEvents: unknown[] = [];
-
-    const unsubscribe = bridge.subscribeToEvents(state.piSessionId, (event) => {
-      observedEvents.push(event);
-    });
-    const accepted = await bridge.sendInitialPrompt({
-      piSessionId: state.piSessionId,
-      prompt: "Create a real Pi RPC-backed session",
-    });
-
-    transport.emitEvent({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "Live session is ready." }],
-        timestamp: 1_782_539_201_000,
-      },
-    });
-    transport.emitEvent({
-      type: "tool_execution_start",
-      toolCallId: "tool-read-1",
-      toolName: "read",
-      args: { path: "AGENTS.md" },
-    });
-
-    unsubscribe();
-
-    expect(transport.startCalls).toEqual([
-      {
-        command: "pi",
-        args: ["--mode", "rpc", "--session-id", "session-1"],
-        cwd: "/Users/void/code/opensource/Pig",
-      },
-    ]);
-    expect(transport.commands).toEqual([
-      expect.objectContaining({ type: "get_state" }),
-      expect.objectContaining({
-        type: "prompt",
-        message: "Create a real Pi RPC-backed session",
-      }),
-    ]);
-    expect(runtime).toMatchObject({
-      runtimeId: "pi-rpc:session-1",
-      status: "ready",
-    });
-    expect(state).toMatchObject({
-      piSessionId: "pi-session-rpc",
-      status: "idle",
-      summary: {
-        provider: "openai",
-        model: "gpt-5-codex",
-      },
-    });
-    expect(accepted).toMatchObject({
-      accepted: true,
-      piSessionId: "pi-session-rpc",
-      event: {
-        kind: "message",
-        role: "user",
-        body: "Create a real Pi RPC-backed session",
-      },
-    });
-    expect(observedEvents).toEqual([
-      expect.objectContaining({
-        kind: "message",
-        role: "assistant",
-        body: "Live session is ready.",
-      }),
-      expect.objectContaining({
-        kind: "tool-call",
-        title: "read",
-        body: "{\"path\":\"AGENTS.md\"}",
-      }),
-    ]);
-  });
-
-  it("reports Pi RPC prompt errors as sending prompt failures", async () => {
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      promptResponse: {
-        id: "req-prompt",
-        type: "response",
-        command: "prompt",
-        success: false,
-        error: "Pi rejected the initial prompt",
-      },
-    });
-    const bridge = createPiRpcRuntimeBridge({ transport });
-    const runtime = await bridge.startRuntime({
-      sessionId: "session-1",
-      projectId: "pig",
-      checkout: {
-        mode: "foreground-local",
-        root: "/Users/void/code/opensource/Pig",
-        runtimeCwd: "/Users/void/code/opensource/Pig",
-      },
-    });
-    const state = await bridge.createPiSessionState({
-      runtimeId: runtime.runtimeId,
-      projectId: "pig",
-      cwd: "/Users/void/code/opensource/Pig",
-    });
-
-    await expect(
-      bridge.sendInitialPrompt({
-        piSessionId: state.piSessionId,
-        prompt: "Create a real Pi RPC-backed session",
-      }),
-    ).rejects.toMatchObject({
-      name: "PiRuntimeBridgeError",
-      stage: "sending prompt",
-      message: "Pi rejected the initial prompt",
-    });
-    expect(transport.commands).toContainEqual(
-      expect.objectContaining({
-        type: "prompt",
-        message: "Create a real Pi RPC-backed session",
-      }),
-    );
-  });
-
-  it("queues follow-up prompts through Pi RPC without adding them to live state until processing starts", async () => {
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
-    const bridge = createPiRpcRuntimeBridge({
-      transport,
+  it("queues follow-up prompts without adding them to live state until processing starts", async () => {
+    const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:00:00.000Z",
     });
     const runtime = await bridge.startRuntime({
@@ -190,13 +35,6 @@ describe("Pi Runtime Bridge contract", () => {
       body: "After this, update the usage tests.",
       status: "pending",
     });
-    expect(transport.commands).toContainEqual(
-      expect.objectContaining({
-        type: "prompt",
-        message: "After this, update the usage tests.",
-        streamingBehavior: "followUp",
-      }),
-    );
   });
 
   it("withdraws pending queued follow-up prompts before processing starts", async () => {
@@ -233,13 +71,8 @@ describe("Pi Runtime Bridge contract", () => {
     });
   });
 
-  it("steers the current active run through Pi RPC without adding a follow-up queue", async () => {
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
-    const bridge = createPiRpcRuntimeBridge({
-      transport,
+  it("steers the current active run without adding a follow-up queue", async () => {
+    const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:00:00.000Z",
     });
     const runtime = await bridge.startRuntime({
@@ -269,18 +102,6 @@ describe("Pi Runtime Bridge contract", () => {
       title: "Steer",
       body: "Steer toward the pending queue edge case.",
     });
-    expect(transport.commands).toContainEqual(
-      expect.objectContaining({
-        type: "steer",
-        message: "Steer toward the pending queue edge case.",
-      }),
-    );
-    expect(transport.commands).not.toContainEqual(
-      expect.objectContaining({
-        streamingBehavior: "followUp",
-        message: "Steer toward the pending queue edge case.",
-      }),
-    );
     await expect(bridge.getSessionState(state.piSessionId)).resolves.toMatchObject({
       events: [
         expect.objectContaining({
@@ -292,13 +113,8 @@ describe("Pi Runtime Bridge contract", () => {
     });
   });
 
-  it("aborts the current active run through Pi RPC and returns a stopped event", async () => {
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
-    const bridge = createPiRpcRuntimeBridge({
-      transport,
+  it("aborts the current active run and returns a stopped event", async () => {
+    const bridge = createInMemoryPiRuntimeBridge({
       now: () => "2026-06-26T08:00:00.000Z",
     });
     const runtime = await bridge.startRuntime({
@@ -326,11 +142,6 @@ describe("Pi Runtime Bridge contract", () => {
       title: "Stopped",
       body: "Pi stopped the active run.",
     });
-    expect(transport.commands).toContainEqual(
-      expect.objectContaining({
-        type: "abort",
-      }),
-    );
     await expect(bridge.getSessionState(state.piSessionId)).resolves.toMatchObject({
       status: "completed",
       events: [

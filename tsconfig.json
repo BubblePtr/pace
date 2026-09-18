@@ -18,7 +18,6 @@
     "baseUrl": ".",
     "paths": {
       "@pace/core": ["packages/core/src/index.ts"],
-      "@pace/core/testing": ["packages/core/src/testing.ts"],
       "@pace/backend": ["packages/backend/src/index.ts"],
       "@/*": ["apps/desktop/src/*"]
     }

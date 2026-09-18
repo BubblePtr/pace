@@ -88,7 +88,6 @@ const rendererBuild = {
 };
 
 const coreAlias = {
-  "@pace/core/testing": resolve(__dirname, "../../packages/core/src/testing.ts"),
   "@pace/core": resolve(__dirname, "../../packages/core/src/index.ts"),
   "@pace/backend": resolve(__dirname, "../../packages/backend/src/index.ts"),
   "@": resolve(__dirname, "src"),
