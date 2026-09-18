@@ -35,7 +35,9 @@ export {
 } from "./environment-preflight";
 
 export {
-  PROVIDER_AUTH_CATALOG,
+  FEATURED_PROVIDER_ORDER,
+  PROVIDER_DISPLAY_OVERRIDES,
+  sortProvidersForDisplay,
   type ProviderAuthId,
   type ProviderAuthMode,
   type ProviderAuthStatusItem,

@@ -115,7 +115,7 @@ function ProviderApiKeyCard({
   return (
     <Card data-testid={`provider-api-key-${provider.id}`}>
       <HStack gap={3} vAlign="start">
-        <ProviderIcon providerId={provider.id} />
+        <ProviderIcon providerId={provider.id} label={provider.label} />
         <VStack gap={1}>
           <Heading level={3}>{provider.label}</Heading>
           <Text as="p" type="supporting">
@@ -213,7 +213,7 @@ function ProviderSubscriptionCard({
   return (
     <Card data-testid={`provider-subscription-${provider.id}`}>
       <HStack gap={3} vAlign="start">
-        <ProviderIcon providerId={provider.id} />
+        <ProviderIcon providerId={provider.id} label={provider.label} />
         <VStack gap={1}>
           <Heading level={3}>{provider.label}</Heading>
           <Text as="p" type="supporting">
@@ -370,7 +370,7 @@ function ModelVisibilitySection({
             key={group.provider}
           >
             <HStack gap={3} vAlign="center">
-              <ProviderIcon providerId={group.provider} />
+              <ProviderIcon providerId={group.provider} label={label} />
               <Heading level={3}>{label}</Heading>
             </HStack>
             <VStack style={{ marginBlockStart: "var(--spacing-4)" }}>
@@ -570,6 +570,7 @@ function SettingsContent({
       />
     ) : undefined;
   const [tab, setTab] = useState<AuthTab>("subscription");
+  const [apiKeyFilter, setApiKeyFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
@@ -584,10 +585,21 @@ function SettingsContent({
     () => providers.filter((provider) => provider.supportsOAuth),
     [providers],
   );
-  const apiKeyProviders = useMemo(
-    () => providers.filter((provider) => provider.supportsApiKey),
-    [providers],
-  );
+  const visibleApiKeyProviders = useMemo(() => {
+    const query = apiKeyFilter.trim().toLowerCase();
+    return providers.filter((provider) => {
+      if (!provider.supportsApiKey) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return (
+        provider.label.toLowerCase().includes(query) ||
+        provider.id.toLowerCase().includes(query)
+      );
+    });
+  }, [apiKeyFilter, providers]);
 
   const providerLabels = useMemo(
     () =>
@@ -736,9 +748,9 @@ function SettingsContent({
                     style={{ marginBlockStart: "var(--spacing-4)" }}
                   >
                     <Text as="p" type="supporting">
-                      ChatGPT/Codex, Anthropic, and Grok (xAI) subscription
-                      login via Pi OAuth (browser). Uses the same Pi{" "}
-                      <code>auth.json</code> as the local TUI.
+                      Log in with a provider subscription via Pi OAuth
+                      (browser). Uses the same Pi <code>auth.json</code> as the
+                      local TUI.
                     </Text>
                     {statusQuery.isLoading ? (
                       <Text as="p" type="supporting">
@@ -760,15 +772,22 @@ function SettingsContent({
                     style={{ marginBlockStart: "var(--spacing-4)" }}
                   >
                     <Text as="p" type="supporting">
-                      Paste API keys for OpenAI, Anthropic, DeepSeek, or Grok
-                      (xAI).
+                      Paste an API key for a provider that accepts one.
                     </Text>
+                    <TextInput
+                      label="Filter providers"
+                      isLabelHidden
+                      placeholder="Filter providers"
+                      value={apiKeyFilter}
+                      onChange={setApiKeyFilter}
+                      width="100%"
+                    />
                     {statusQuery.isLoading ? (
                       <Text as="p" type="supporting">
                         Loading…
                       </Text>
                     ) : (
-                      apiKeyProviders.map((provider) => (
+                      visibleApiKeyProviders.map((provider) => (
                         <ProviderApiKeyCard
                           key={provider.id}
                           provider={provider}

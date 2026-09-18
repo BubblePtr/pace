@@ -247,6 +247,14 @@ export function invokeBrowserFallback<T>(command: string, args?: InvokeArgs): Pr
             configured: false,
           },
           {
+            id: "radius",
+            label: "Radius",
+            supportsApiKey: true,
+            supportsOAuth: true,
+            mode: "none",
+            configured: false,
+          },
+          {
             id: "deepseek",
             label: "DeepSeek",
             supportsApiKey: true,
