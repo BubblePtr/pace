@@ -5,9 +5,6 @@ import { addResourceDiagnostics } from "./workspace/resource-diagnostics";
 import { homedir } from "node:os";
 import type {
   ExecutionCheckoutGitClient,
-  PiRpcCommand,
-  PiRpcTransport,
-  PiRpcTransportStartInput,
   ProviderAuthId,
   SetResourceEnabledInput,
   RuntimeGatewayEventEnvelope,
@@ -43,7 +40,6 @@ import {
   createNodeSessionFilesReader,
   type SessionFilesReader,
 } from "./workspace/session-files";
-import { createNodePiRpcProcess } from "./drivers/pi-rpc";
 import { createPiSdkDriver } from "./drivers/pi-sdk-driver";
 import {
   createTerminalManager,
@@ -113,7 +109,6 @@ export type BackendServiceOptions = {
   dataDir?: string;
   sessionCache?: SessionIndexCache;
   gitClient?: ExecutionCheckoutGitClient;
-  piRpc?: PiRpcTransport;
   runtimeDriver?: PiRuntimeDriver;
   runtimeJournal?: SessionEventJournal;
   sessionProjectionStore?: SessionProjectionStore;
@@ -135,7 +130,6 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
   const dataDir = options.dataDir ?? resolveDataDir(process.env, homedir());
   const sessionCache = options.sessionCache ?? createSessionIndexCache();
   const gitClient = options.gitClient ?? createNodeExecutionCheckoutGitClient();
-  const piRpc = options.piRpc ?? createNodePiRpcProcess();
   const projectionStore =
     options.sessionProjectionStore ??
     createFileSessionProjectionStore({
@@ -307,7 +301,6 @@ export function createBackendService(options: BackendServiceOptions = {}): Backe
             agentDir,
             sessionCache,
             gitClient,
-            piRpc,
             sessionProjectionStore,
             sessionChangesReader,
             sessionFilesReader,
@@ -344,7 +337,6 @@ async function dispatchRequest(input: {
   agentDir: string;
   sessionCache: SessionIndexCache;
   gitClient: ExecutionCheckoutGitClient;
-  piRpc: PiRpcTransport;
   sessionProjectionStore: SessionProjectionStore;
   sessionChangesReader: SessionChangesReader;
   sessionFilesReader: SessionFilesReader;
@@ -490,14 +482,6 @@ async function dispatchRequest(input: {
         checkoutRoot: string;
         sessionId: string;
       });
-      return null;
-    case "start_pi_rpc_runtime":
-      await input.piRpc.start(requiredRecord(params.input, "input") as PiRpcTransportStartInput);
-      return null;
-    case "send_pi_rpc_command":
-      return input.piRpc.send(requiredRecord(params.command, "command") as PiRpcCommand);
-    case "stop_pi_rpc_runtime":
-      await input.piRpc.stop?.();
       return null;
     case "list_terminals":
       return input.terminalManager.list(requiredString(params.sessionId, "sessionId"));

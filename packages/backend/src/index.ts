@@ -44,11 +44,6 @@ export {
 } from "./gateway/runtime-gateway";
 
 export {
-  createPiRpcProcessDriver,
-  type PiRpcProcessDriverOptions,
-} from "./drivers/pi-rpc-driver";
-
-export {
   PiSdkDriverUnsupportedError,
   createPiSdkDriver,
   type PiSdkDriverOptions,

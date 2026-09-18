@@ -42,14 +42,6 @@ export {
   type ProviderAuthStatusReport,
 } from "./provider-auth";
 
-export type {
-  PiRpcCommand,
-  PiRpcResponse,
-  PiRpcRawEvent,
-  PiRpcTransportStartInput,
-  PiRpcTransport,
-} from "./pi-rpc";
-
 export type { ExecutionCheckoutGitClient } from "./checkout";
 
 export type {

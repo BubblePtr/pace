@@ -113,7 +113,7 @@ flowchart TB
   pi -->|"owns"| pilog[("Pi session jsonl<br/>~/.pi — context truth")]
 ```
 
-- **Driver**: `SessionProcessDriver` gives every root Session its own process and working directory. Each process hosts the existing Pi SDK driver; plugins own their child Sessions. The CLI RPC driver remains frozen ([ADR-0040](docs/adr/0040-root-session-process-isolation.md)).
+- **Driver**: `SessionProcessDriver` gives every root Session its own process and working directory. Each process hosts the Pi SDK driver; plugins own their child Sessions ([ADR-0040](docs/adr/0040-root-session-process-isolation.md)). The SDK driver is the only Pi driver; the earlier CLI RPC driver was removed ([ADR-0041](docs/adr/0041-remove-pi-rpc-driver.md)).
 
 - **Normalizer**: converts the raw events Pi emits into a unified `AgentRuntimeEvent`, attaching a phase, a target surface and globally deterministic message ids ([ADR-0020](docs/adr/0020-agent-runtime-event-model.md)). The recorded fixture contract tests are the executable spec of this protocol.
 

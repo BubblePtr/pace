@@ -8,7 +8,6 @@ export default defineConfig({
   clearScreen: false,
   resolve: {
     alias: {
-      "@pace/core/testing": resolve(__dirname, "packages/core/src/testing.ts"),
       "@pace/core": resolve(__dirname, "packages/core/src/index.ts"),
       "@pace/backend": resolve(__dirname, "packages/backend/src/index.ts"),
       "@": resolve(__dirname, "apps/desktop/src"),

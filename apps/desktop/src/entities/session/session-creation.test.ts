@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createInMemoryPiRuntimeBridge } from "@/entities/runtime/in-memory-pi-runtime-bridge";
-import { createPiRpcRuntimeBridge } from "@/entities/runtime/pi-rpc-runtime-bridge";
-import { createFakePiRpcTransport } from "@pace/core/testing";
 import { createExecutionCheckoutManager } from "@/entities/checkout/execution-checkout";
 import type {
   AgentRuntimeEventEntry,
   PiRuntimeBridge,
+  PiRuntimeEvent,
 } from "@/entities/runtime/pi-runtime-bridge";
 import {
   createInMemorySessionProjectionStore,
@@ -240,26 +239,39 @@ describe("Session Creation state machine", () => {
     });
   });
 
-  it("keeps Session Projection in sync with the Pi RPC Runtime Event Stream", async () => {
+  it("keeps Session Projection in sync with the Runtime Event Stream", async () => {
     const projections = createInMemorySessionProjectionStore();
-    const transport = createFakePiRpcTransport({
-      sessionId: "pi-session-rpc",
-      model: {
+    const inner = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:00:00.000Z",
+      summary: {
         provider: "openai",
-        id: "gpt-5-codex",
+        model: "gpt-5-codex",
       },
     });
-    const bridge = createPiRpcRuntimeBridge({
-      transport,
-      now: () => "2026-06-26T08:00:00.000Z",
-    });
+    const listeners = new Set<(event: PiRuntimeEvent) => void>();
+    const bridge: PiRuntimeBridge = {
+      ...inner,
+      subscribeToEvents(piSessionId, listener) {
+        const unsubscribe = inner.subscribeToEvents(piSessionId, listener);
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+          unsubscribe();
+        };
+      },
+    };
+    const emit = (event: PiRuntimeEvent) => {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    };
 
     const result = await createSessionFromDraft({
       bridge,
       projections,
       draft: {
         projectId: "pig",
-        prompt: "Create a real Pi RPC-backed session",
+        prompt: "Create a resumable live session",
         updatedAt: "2026-06-26T08:00:00.000Z",
       },
       project: {
@@ -271,38 +283,30 @@ describe("Session Creation state machine", () => {
       idFactory: () => "session-1",
     });
 
-    transport.emitEvent({
-      type: "message_update",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "Live" }],
-      },
-      assistantMessageEvent: {
-        type: "text_delta",
-        delta: "Live",
-      },
-    });
-    transport.emitEvent({
-      type: "message_end",
-      message: {
-        role: "assistant",
+    if (!result.ok) {
+      throw new Error("expected session creation to succeed");
+    }
+
+    emit({
+      id: "runtime-event-assistant",
+      piSessionId: result.projection.piSessionId!,
+      kind: "message",
+      role: "assistant",
+      body: "Live session is ready.",
+      timestamp: "2026-06-26T08:00:04.000Z",
+      summary: {
         provider: "openai",
         model: "gpt-5-codex",
-        usage: {
-          totalTokens: 1280,
-          cost: {
-            total: 0.012345,
-          },
-        },
-        content: [{ type: "text", text: "Live session is ready." }],
-        timestamp: "2026-06-26T08:00:04.000Z",
+        totalTokens: 1280,
+        totalCostUsd: 0.012345,
       },
     });
-    transport.emitEvent({
-      type: "tool_execution_start",
-      toolCallId: "tool-read-1",
-      toolName: "read",
-      args: { path: "AGENTS.md" },
+    emit({
+      id: "runtime-event-tool",
+      piSessionId: result.projection.piSessionId!,
+      kind: "tool-call",
+      title: "read",
+      body: "{\"path\":\"AGENTS.md\"}",
       timestamp: "2026-06-26T08:00:05.000Z",
     });
 
@@ -320,7 +324,7 @@ describe("Session Creation state machine", () => {
         expect.objectContaining({
           kind: "message",
           role: "user",
-          body: "Create a real Pi RPC-backed session",
+          body: "Create a resumable live session",
         }),
         expect.objectContaining({
           kind: "message",
@@ -347,16 +351,13 @@ describe("Session Creation state machine", () => {
         ?.runtimeEvents.filter((event) => event.role === "assistant"),
     ).toHaveLength(1);
 
-    if (!result.ok) {
-      throw new Error("expected session creation to succeed");
-    }
-
     result.unsubscribeRuntimeEvents();
-    transport.emitEvent({
-      type: "tool_execution_start",
-      toolCallId: "tool-after-dispose",
-      toolName: "write",
-      args: { path: "README.md" },
+    emit({
+      id: "runtime-event-after-dispose",
+      piSessionId: result.projection.piSessionId!,
+      kind: "tool-call",
+      title: "write",
+      body: "{\"path\":\"README.md\"}",
       timestamp: "2026-06-26T08:00:06.000Z",
     });
 

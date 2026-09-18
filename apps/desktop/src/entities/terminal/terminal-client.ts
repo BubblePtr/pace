@@ -8,7 +8,7 @@ import {
  * Renderer client for the backend terminal service. Each terminal is a PTY
  * rooted in a Session's checkout; the backend owns the process and buffers
  * output, the renderer attaches, replays scrollback, and streams input.
- * Injection points mirror pi-rpc-transport.ts so tests never touch the
+ * Invoke and event-subscription injection points so tests never touch the
  * Electron bridge.
  */
 export type TerminalInstanceInfo = {

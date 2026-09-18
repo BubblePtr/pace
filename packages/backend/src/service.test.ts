@@ -10,7 +10,6 @@ import {
   resolveDataDir,
 } from "./persistence/session-event-journal";
 import { createInMemorySessionProjectionStore } from "./persistence/session-projection-store";
-import { createFakePiRpcTransport } from "@pace/core/testing";
 import type { SessionSummary } from "@pace/core";
 import type { PiRuntimeDriver } from "./gateway/runtime-gateway";
 import type {
@@ -224,7 +223,6 @@ describe("backend service", () => {
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       sessionProjectionStore: projections,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -285,7 +283,6 @@ describe("backend service", () => {
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       sessionProjectionStore: createInMemorySessionProjectionStore(),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -314,7 +311,6 @@ describe("backend service", () => {
         isGitRepository: async () => true,
         addDetachedWorktree: async () => {},
       },
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(service.handleRequest({ id: "req-1", method: "list_sessions" })).resolves.toEqual({
@@ -363,7 +359,6 @@ describe("backend service", () => {
     const service = createBackendService({
       agentDir: fixtureAgentDir(),
       sessionProjectionStore: projections,
-      piRpc: createFakePiRpcTransport(),
     });
 
     const presenceById = async (id: string) => {
@@ -435,7 +430,6 @@ describe("backend service", () => {
     const service = createBackendService({
       sessionProjectionStore: projections,
       sessionChangesReader: { read, checkoutBranch: vi.fn() },
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -497,7 +491,6 @@ describe("backend service", () => {
     const service = createBackendService({
       sessionProjectionStore: projections,
       sessionChangesReader: { read: vi.fn(), checkoutBranch },
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -551,7 +544,6 @@ describe("backend service", () => {
     const service = createBackendService({
       sessionProjectionStore: projections,
       sessionFilesReader: { listDirectory, readFile: vi.fn() },
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -615,7 +607,6 @@ describe("backend service", () => {
     const service = createBackendService({
       sessionProjectionStore: projections,
       sessionFilesReader: { listDirectory: vi.fn(), readFile: readSessionFile },
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -654,7 +645,6 @@ describe("backend service", () => {
     const service = createBackendService({
       agentDir: fixtureAgentDir(),
       dataDir,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await service.handleRequest({
@@ -820,16 +810,14 @@ describe("backend service", () => {
     ).resolves.toEqual({ id: "req-projections-after-delete", result: [] });
   });
 
-  it("uses the SDK driver for Runtime Gateway by default while retaining raw RPC commands", async () => {
+  it("uses the SDK driver for Runtime Gateway by default", async () => {
     const sdkSession = createFakeSdkAgentSession();
-    const piRpc = createFakePiRpcTransport();
     createAgentSession.mockResolvedValue({ session: sdkSession.session });
     const service = createBackendService({
       agentDir: fixtureAgentDir(),
       // In-memory journal: this test never reads the snapshot back, so a file
       // journal's in-flight append would race the temp-dir cleanup.
       runtimeJournal: createInMemorySessionEventJournal(),
-      piRpc,
     });
     const events: unknown[] = [];
 
@@ -858,8 +846,6 @@ describe("backend service", () => {
     expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
       cwd: process.cwd(),
     }));
-    expect(piRpc.startCalls).toEqual([]);
-    expect(piRpc.commands).toEqual([]);
 
     const sendResponse = service.handleRequest({
       id: "req-send",
@@ -941,30 +927,6 @@ describe("backend service", () => {
         }),
       }),
     });
-    await expect(
-      service.handleRequest({
-        id: "req-rpc",
-        method: "send_pi_rpc_command",
-        params: {
-          command: {
-            id: "legacy-rpc-1",
-            type: "get_state",
-          },
-        },
-      }),
-    ).resolves.toEqual({
-      id: "req-rpc",
-      result: expect.objectContaining({
-        command: "get_state",
-        success: true,
-      }),
-    });
-    expect(piRpc.commands).toEqual([
-      {
-        id: "legacy-rpc-1",
-        type: "get_state",
-      },
-    ]);
   });
 
   it("resumes cold sessions through SDK SessionManager.open by default", async () => {
@@ -984,7 +946,6 @@ describe("backend service", () => {
       agentDir: fixtureAgentDir(),
       sessionProjectionStore: projections,
       runtimeJournal: createInMemorySessionEventJournal(),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1078,7 +1039,6 @@ describe("backend service", () => {
       agentDir: fixtureAgentDir(),
       sessionProjectionStore: projections,
       runtimeJournal: journal,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1149,7 +1109,6 @@ describe("backend service", () => {
       agentDir: fixtureAgentDir(),
       sessionProjectionStore: projections,
       piSessionListAll,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1193,7 +1152,6 @@ describe("backend service", () => {
       agentDir: fixtureAgentDir(),
       sessionProjectionStore: projections,
       piSessionListAll,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await service.handleRequest({
@@ -1251,7 +1209,6 @@ describe("backend service", () => {
           path: "/Users/void/.pi/agent/sessions/project/pi-session-sdk.jsonl",
         },
       ]),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await service.handleRequest({
@@ -1312,7 +1269,6 @@ describe("backend service", () => {
       sessionProjectionStore: projections,
       runtimeJournal: journal,
       piSessionListAll: vi.fn(async () => []),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1383,7 +1339,6 @@ describe("backend service", () => {
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       terminalManager: terminalManager.manager,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1493,7 +1448,6 @@ describe("backend service", () => {
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       terminalManager: terminalManager.manager,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1540,7 +1494,6 @@ describe("backend service", () => {
       runtimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
       terminalManager: createFakeTerminalManager().manager,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1572,7 +1525,6 @@ describe("backend service", () => {
       sessionProjectionStore: createInMemorySessionProjectionStore(),
       runtimeJournal: createInMemorySessionEventJournal(),
       terminalManager: terminalManager.manager,
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1635,7 +1587,6 @@ describe("backend service", () => {
         onEvent: vi.fn(() => () => {}),
       } as unknown as PiRuntimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1673,7 +1624,6 @@ describe("backend service", () => {
         onEvent: vi.fn(() => () => {}),
       } as unknown as PiRuntimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
-      piRpc: createFakePiRpcTransport(),
     });
 
     const response = await service.handleRequest({
@@ -1701,7 +1651,6 @@ describe("backend service", () => {
         onEvent: vi.fn(() => () => {}),
       } as unknown as PiRuntimeDriver,
       runtimeJournal: createInMemorySessionEventJournal(),
-      piRpc: createFakePiRpcTransport(),
     });
 
     await expect(
@@ -1738,7 +1687,7 @@ describe("workspace invalidation delivery", () => {
           await stopping;
           return { sessionId: "a", piSessionId: "pi-a", type: "stopped", payload: {} };
         },
-      } as unknown as PiRuntimeDriver, piRpc: createFakePiRpcTransport() });
+      } as unknown as PiRuntimeDriver });
     const delivered: string[][] = [];
     service.onEvent(({ event }) => {
       if (event.type === "workspace.invalidated") delivered.push(event.payload.sessionIds as string[]);
@@ -1779,8 +1728,7 @@ describe("workspace invalidation delivery", () => {
     const read = vi.fn();
     const service = createBackendService({ sessionProjectionStore: projections, runtimeJournal: journal,
       sessionChangesReader: { read, checkoutBranch: vi.fn() },
-      runtimeDriver: { onEvent: (listener: Parameters<PiRuntimeDriver["onEvent"]>[0]) => { emit = listener; return () => {}; } } as PiRuntimeDriver,
-      piRpc: createFakePiRpcTransport() });
+      runtimeDriver: { onEvent: (listener: Parameters<PiRuntimeDriver["onEvent"]>[0]) => { emit = listener; return () => {}; } } as PiRuntimeDriver });
     const events: import("./service").BackendRpcEvent[] = [];
     service.onEvent((event) => events.push(event));
     await service.handleRequest({ id: "init", method: "list_session_projections" });
@@ -1823,7 +1771,7 @@ it("delivers external Git changes to linked checkout siblings without a runtime 
   const read = vi.fn();
   const service = createBackendService({ dataDir: join(root, "data"), sessionProjectionStore: projections,
     runtimeJournal: createInMemorySessionEventJournal(), sessionChangesReader: { read, checkoutBranch: vi.fn() },
-    runtimeDriver: { onEvent: () => () => {} } as unknown as PiRuntimeDriver, piRpc: createFakePiRpcTransport() });
+    runtimeDriver: { onEvent: () => () => {} } as unknown as PiRuntimeDriver });
   const delivered: unknown[] = [];
   service.onEvent(({ event }) => { if (event.type === "workspace.invalidated") delivered.push(event.payload); });
   try {

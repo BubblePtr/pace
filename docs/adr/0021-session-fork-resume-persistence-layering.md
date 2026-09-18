@@ -25,6 +25,8 @@
 
 **`resume_session` / `fork_session` 为 SDK-only Gateway 命令；RPC driver 冻结**。RPC 与 SDK 事件面同构，但命令面隔进程摸不到 SessionManager（无法注入、无法读 leaf、无法提取分支），新能力只补 unsupported stub + 记 capability 缺口，不追赶。保留 RPC driver 的期权价值：跟随用户本机 pi CLI 版本、SDK 版本回归的逃生通道。正式删除需单独 ADR（推翻 ADR-0018 一部分）。
 
+> 后续（2026-09-18）：[ADR-0041](0041-remove-pi-rpc-driver.md) 已删除 RPC driver；上述期权价值随 ADR-0031 的内置引擎策略失效。
+
 **Sidebar 历史列表只来自持久化的 Session Projection，且 Projection 只由 PiGUI 内创建的 Session 产生**。不扫 `~/.pi` 自动混入：外部 session 没有 journal/checkout/status，是幽灵行；与 Project Registry"手动添加、不自动发现"纪律一致；`listAll` 需全文解析所有 jsonl，启动性能不可接受。PiGUI 不提供 Pi CLI/TUI session import；需要在 PiGUI 继续外部工作时，用户在目标 Project 内新建 PiGUI Session，这与 Codex 的本地 thread 边界一致。
 
 > 范围澄清（2026-09-05，[ADR-0031](0031-bundled-pi-runtime-and-extension-compatibility.md)）：不导入 CLI/TUI 会话是当前实现范围，不是永久产品原则。会话交接可后续单独设计；GUI 与终端同时操作同一个运行实例不作为当前架构前提。本次澄清不改变现有列表和持久化行为。
