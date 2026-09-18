@@ -1,5 +1,7 @@
 # 固定 Runtime Gateway API，Pi SDK 与 RPC 作为后端 Driver
 
+> 现状（2026-09-18）：Gateway API 分层仍然有效；driver 部分已被后续决策收窄。`PiSdkDriver` 是唯一的生产路径（经 [ADR-0040](0040-root-session-process-isolation.md) 的 `SessionProcessDriver` 每根 Session 一进程运行）。`PiRpcProcessDriver` 自 [ADR-0021](0021-session-fork-resume-persistence-layering.md) 起冻结：不再是可切换的后备路径，新 Gateway 命令不为其补实现，组合根也不会把它装进 Gateway。下文“后端可以切换到 RPC 子进程 driver”与“fallback driver”的表述是当时的设计，不再成立；仍保留的只有 `start_pi_rpc_runtime` / `send_pi_rpc_command` / `stop_pi_rpc_runtime` 这条不经 Gateway 的调试直连。
+
 PiGUI 的前端、未来 Web/mobile 客户端以及后端之间，固定的是 **PiGUI Runtime Gateway API**，不是 Pi SDK API，也不是 Pi RPC 原始协议。Renderer 只表达 PiGUI 的产品语义：创建 Session、attach/reconnect、发送 prompt、Queue、Steer、Stop、读取 runtime snapshot、订阅 runtime events、查看审计与产物。Pi 的具体接入方式收敛在后端 driver 内部。
 
 ## Decision

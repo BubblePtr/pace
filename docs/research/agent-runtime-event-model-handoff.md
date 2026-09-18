@@ -1,5 +1,7 @@
 # Agent Runtime Event Model handoff
 
+> 现状（2026-09-18）：本文是 [ADR-0020](../adr/0020-agent-runtime-event-model.md) 之前的交接稿，六个切片均已落地。其中“RPC driver 也映射到同一模型”一项在切片 5 完成后即随 [ADR-0021](../adr/0021-session-fork-resume-persistence-layering.md) 冻结：RPC driver 不再接入 Gateway，SDK driver 是唯一生产路径。
+
 ## 背景
 
 目标是让 PiGUI 像 Pi TUI 一样稳定地表达一次 agent run：同一个 assistant 输出在流式更新时只占一个消息边界，thinking、tool call、tool result、status 和最终回答各自进入正确的 UI surface，而不是都被挤进 Live Chat bubble。

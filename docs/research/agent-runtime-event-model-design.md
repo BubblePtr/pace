@@ -1,5 +1,7 @@
 # Agent Runtime Event Model 架构设计
 
+> 现状（2026-09-18）：六个切片均已落地。第 9 节切片 5 提到的 `PiRpcProcessDriver` 已随 [ADR-0021](../adr/0021-session-fork-resume-persistence-layering.md) 冻结，不再是生产路径；“renderer 侧 `pi-rpc-runtime-bridge` 是浏览器 fallback”的描述也已过时：`pi-runtime-factory.ts` 在非 Electron 环境返回 in-memory bridge，Electron 下走 Runtime Gateway client，`pi-rpc-runtime-bridge` 只在测试显式注入 transport 时使用。
+
 > 基于 `agent-runtime-event-model-handoff.md` 的 grilling 结论。每个决策点标注了 **[已定]**（代码证据可直接定案，或 2026-07-02 用户已确认）或 **[待确认]**（推荐方案已给出，等用户拍板）。
 
 ## 1. 从代码确认的事实（不再是开放问题）

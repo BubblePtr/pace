@@ -5,7 +5,7 @@ Status: research, partially superseded
 
 > 更新（2026-06-29）：本文写于 Tauri 时期。外壳此后迁至 Electron（见 ADR-0013），宿主进程已是 Node，因此正文中"Tauri 进程""Tauri/Rust 与 Node runtime 边界"等措辞按"PiGUI 主进程 / Node 运行时"理解；进程隔离的结论不变。下方已就地修正主要措辞。
 >
-> 更新（2026-06-29）：接入策略已由 [ADR-0018](../adr/0018-runtime-gateway-api-and-pi-drivers.md) 取代。当前决策是固定 PiGUI Runtime Gateway API，优先验证 Pi SDK driver，并保留 RPC 子进程 driver 作为隔离/兼容路径。本文关于 ACP 取舍、并发 worktree、monorepo cwd 与 Execution Checkout 的调研仍可作为背景参考。
+> 更新（2026-06-29，2026-09-18 修订）：接入策略已由 [ADR-0018](../adr/0018-runtime-gateway-api-and-pi-drivers.md) 取代，固定 PiGUI Runtime Gateway API。本文第 6 节“Pi Runtime Bridge 首先用 RPC 子进程实现，SDK 作为第二阶段”的建议已被反转：Pi SDK driver 是唯一生产路径，RPC 子进程 driver 自 [ADR-0021](../adr/0021-session-fork-resume-persistence-layering.md) 起冻结，进程隔离由 [ADR-0040](../adr/0040-root-session-process-isolation.md) 的根 Session 独立进程承担。本文关于 ACP 取舍、并发 worktree、monorepo cwd 与 Execution Checkout 的调研仍可作为背景参考。
 
 PiGUI 已决定从只读 Session Trace 工具转向 Agent Workspace Control Plane。这个转向要求 PiGUI 能创建、启动、停止、切换和观察 Pi agent 运行。当前有三条候选集成路线：封装 Pi CLI、通过 ACP、直接使用 Pi SDK。
 
