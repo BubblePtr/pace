@@ -72,12 +72,21 @@ function assertUploadedAssets(args, files) {
   }
 }
 
+// Assets upload one call each, in parallel, so coverage is asserted across
+// the whole set of upload invocations rather than a single command line.
+function assertParallelUploads(calls, files) {
+  const uploads = calls.filter(args => args[1] === "upload");
+  assert.equal(uploads.length, files.length, `expected ${files.length} upload calls in ${JSON.stringify(calls)}`);
+  assert.ok(uploads.every(args => args.includes("--clobber")), "every upload should clobber");
+  assertUploadedAssets(uploads.flat(), files);
+}
+
 test("a stable release is published only after every required asset reaches its draft", t => {
   const { result, calls, files } = runPublish(t);
   assert.equal(result.status, 0, result.stderr);
   const create = calls.find(args => args[1] === "create");
   assert.ok(create.includes("--draft"));
-  assertUploadedAssets(create, files);
+  assertParallelUploads(calls, files);
   const edit = calls.find(args => args[1] === "edit");
   assert.ok(edit.includes("--draft=false"));
   assert.ok(edit.includes("--prerelease=false"));
@@ -97,9 +106,7 @@ test("an existing draft keeps its notes while its assets are updated and publish
   const { result, calls, files } = runPublish(t, { existing: true });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!calls.some(args => args[1] === "create"));
-  const upload = calls.find(args => args[1] === "upload");
-  assert.ok(upload.includes("--clobber"));
-  assertUploadedAssets(upload, files);
+  assertParallelUploads(calls, files);
   const edit = calls.find(args => args[1] === "edit");
   assert.ok(edit.includes("--draft=false"));
   assert.ok(!edit.some(arg => arg.startsWith("--notes")));
