@@ -30,6 +30,7 @@ import {
   XiaomiMiMo,
   ZAI,
 } from "@lobehub/icons";
+import { RadiusColor, RadiusMono } from "./radius-mark";
 
 type GlyphIcon = ComponentType<{
   size?: number | string;
@@ -70,9 +71,10 @@ function lobeBrand(icon: LobeMark): ProviderBrand {
 }
 
 /**
- * Brand treatment from @lobehub/icons constants / Color variants.
+ * Brand treatment from @lobehub/icons constants / Color variants (Radius's
+ * mark is self-built in ./radius-mark — LobeHub does not ship it).
  * Mono alone is flat black — wrap in brand surface + tint (or Color path).
- * Ids without a mark (Radius, and anything else missing) use a letter fallback.
+ * Ids without a mark use a letter fallback.
  */
 const providerBrands: Record<string, ProviderBrand> = {
   openai: {
@@ -129,6 +131,12 @@ const providerBrands: Record<string, ProviderBrand> = {
   opencode: lobeBrand(OpenCode),
   "opencode-go": lobeBrand(OpenCode),
   openrouter: lobeBrand(OpenRouter),
+  radius: {
+    Mono: RadiusMono,
+    Color: RadiusColor,
+    background: "color-mix(in srgb, #4d9abf 14%, transparent)",
+    foreground: "#4d9abf",
+  },
   "qwen-token-plan": lobeBrand(Qwen),
   "qwen-token-plan-cn": lobeBrand(Qwen),
   "qwen-token-plan-individual": lobeBrand(Qwen),
