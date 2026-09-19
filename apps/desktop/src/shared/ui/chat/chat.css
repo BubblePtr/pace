@@ -3,6 +3,10 @@
 
 /* —— TextShimmer —— */
 
+:root {
+  --chat-brand-sweep-duration: 4s;
+}
+
 .text-shimmer {
   display: inline-block;
   background: linear-gradient(
@@ -51,7 +55,10 @@
     var(--pi-blue) 80%
   );
   background-size: 200% 100%;
-  animation: chat-text-shimmer-brand var(--duration-slow-max) linear infinite;
+  /* A brand sweep is decorative, not a busy indicator: the runtime token
+     (~1.3s) reads as frantic on a 3xl headline. One shared brand tempo also
+     keeps the composer ring in step with the title. */
+  animation: chat-text-shimmer-brand var(--chat-brand-sweep-duration) linear infinite;
 }
 
 @keyframes chat-text-shimmer-brand {
@@ -909,7 +916,7 @@
    stays static so the accent doesn't read as busy when it isn't. */
 .prompt-input[data-accent="brand"][data-status="submitted"] .astryx-chat-composer::after,
 .prompt-input[data-accent="brand"][data-status="streaming"] .astryx-chat-composer::after {
-  animation: chat-accent-flow var(--duration-slow-max) linear infinite;
+  animation: chat-accent-flow var(--chat-brand-sweep-duration) linear infinite;
 }
 
 @keyframes chat-accent-flow {
