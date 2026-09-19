@@ -116,12 +116,24 @@ const providerBrands: Record<string, ProviderBrand> = {
   "cloudflare-ai-gateway": lobeBrand(Cloudflare),
   "cloudflare-workers-ai": lobeBrand(WorkersAI),
   fireworks: lobeBrand(Fireworks),
-  "github-copilot": lobeBrand(GithubCopilot),
+  "github-copilot": {
+    Mono: GithubCopilot,
+    // Copilot ships a black mark only: light surface + hairline, like OpenAI.
+    background: "#ffffff",
+    foreground: GithubCopilot.colorPrimary || "#000000",
+    ring: "0 0 0 1px rgba(0,0,0,0.12)",
+  },
   google: lobeBrand(Google),
   "google-vertex": lobeBrand(VertexAI),
   groq: lobeBrand(Groq),
   huggingface: lobeBrand(HuggingFace),
-  "kimi-coding": lobeBrand(Kimi),
+  "kimi-coding": {
+    Mono: Kimi,
+    // Kimi's colour mark is blue + white, drawn for a dark surface.
+    Color: Kimi.Color,
+    background: "#111111",
+    foreground: "#ffffff",
+  },
   minimax: lobeBrand(Minimax),
   "minimax-cn": lobeBrand(Minimax),
   mistral: lobeBrand(Mistral),
@@ -130,7 +142,13 @@ const providerBrands: Record<string, ProviderBrand> = {
   nvidia: lobeBrand(Nvidia),
   opencode: lobeBrand(OpenCode),
   "opencode-go": lobeBrand(OpenCode),
-  openrouter: lobeBrand(OpenRouter),
+  openrouter: {
+    Mono: OpenRouter,
+    // OpenRouter's lime mark is meant for a dark surface.
+    Color: OpenRouter.Color,
+    background: "#111111",
+    foreground: OpenRouter.colorPrimary || "#ffffff",
+  },
   radius: {
     Mono: RadiusMono,
     Color: RadiusColor,
