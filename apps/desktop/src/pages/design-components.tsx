@@ -1507,6 +1507,7 @@ function PromptInputDemo({
   lockInputOnRun?: boolean;
   error?: string;
   accent?: "brand";
+  accentFocusRing?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
 
@@ -1563,6 +1564,52 @@ function ChatRunFailureGallery() {
   </GallerySection>;
 }
 
+/**
+ * The footer slot as the Draft → Live handoff uses it: one row of chrome that
+ * keeps its height while its content is swapped, so the composer never
+ * re-flows when a Session binds.
+ */
+function PromptInputFooterSlotDemo() {
+  const [bound, setBound] = useState(false);
+  const [value, setValue] = useState("");
+
+  return (
+    <Variant caption="footer slot (click to swap draft → live content)">
+      <VStack gap={2}>
+        <div className="w-[32rem]">
+          <ChatPromptInput
+            footer={
+              bound ? (
+                <span className="flex w-full items-center gap-2">
+                  <span className="text-xs text-muted">feat/draft-live-handoff</span>
+                  <span className="ml-auto inline-flex shrink-0">
+                    <ContextUsageMeter
+                      usage={{ tokens: 90_000, contextWindow: 200_000, percent: 45 }}
+                    />
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs text-muted">Pace · Git worktree</span>
+              )
+            }
+            footerKey={bound ? "branch" : "draft-target"}
+            placeholder="Ask anything"
+            value={value}
+            onSubmit={() => setValue("")}
+            onValueChange={setValue}
+          />
+        </div>
+        <Button
+          label={bound ? "Back to the draft footer" : "Bind the Session"}
+          size="sm"
+          variant="secondary"
+          onClick={() => setBound((current) => !current)}
+        />
+      </VStack>
+    </Variant>
+  );
+}
+
 function ChatPromptInputGallery() {
   return (
     <GallerySection title="ChatPromptInput">
@@ -1581,15 +1628,21 @@ function ChatPromptInputGallery() {
           status="error"
         />
         <PromptInputDemo
-          caption="accent=brand, status=ready (focus the field to see the ring)"
+          caption="accent=brand + accentFocusRing, status=ready (focus the field to see the ring; session-draft empty state only)"
+          accent="brand"
+          accentFocusRing
+        />
+        <PromptInputDemo
+          caption="accent=brand, status=ready (in-Session: focus leaves the ring off)"
           accent="brand"
         />
         <PromptInputDemo
-          caption="accent=brand, status=submitted (flowing ring, opt-in only on the session-draft empty state)"
+          caption="accent=brand, status=submitted (flowing ring, Session Creation included)"
           accent="brand"
           lockInputOnRun
           status="submitted"
         />
+        <PromptInputFooterSlotDemo />
       </VariantRow>
     </GallerySection>
   );
@@ -2479,7 +2532,7 @@ export const componentExamples: ComponentExample[] = [
   { name: "ChatMarkdown", category: "Conversation", description: "Rich message content, heading hierarchy, and streaming Markdown.", Preview: ChatMarkdownGallery },
   { name: "ChatCodeBlock", category: "Conversation", description: "Syntax-highlighted code with copy controls.", Preview: ChatCodeBlockGallery },
   { name: "ChatThoughtMarkdown", category: "Conversation", description: "Lightweight inline Markdown for reasoning text.", Preview: ChatThoughtMarkdownGallery },
-  { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states.", Preview: ChatPromptInputGallery },
+  { name: "ChatPromptInput", category: "Composer", description: "Message entry across ready, streaming, and error states, with the stable footer slot.", Preview: ChatPromptInputGallery },
   { name: "ChatPromptSuggestion", category: "Composer", description: "Suggested prompts that help start a conversation.", Preview: ChatPromptSuggestionGallery },
   { name: "ChatQueuedMessage", category: "Composer", description: "Pending messages waiting to be sent to the runtime.", Preview: ChatQueuedMessageGallery },
   { name: "ModelSelectorControl", category: "Composer", description: "Choose a model, reasoning level, and fast mode.", Preview: ModelSelectorControlGallery },

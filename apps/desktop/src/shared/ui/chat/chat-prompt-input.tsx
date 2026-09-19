@@ -121,6 +121,79 @@ function PromptTextArea({
 }
 
 /**
+ * Mirrors the `--duration-fast` crossfade in chat.css: how long the outgoing
+ * footer content stays mounted so it can fade while the new content fades in.
+ */
+const footerCrossfadeMs = 175;
+
+/**
+ * The footer line is a stable slot: it keeps one control row of height
+ * whatever it holds, and swapping its content (the Session Draft's Project
+ * pickers for the Live Session's branch picker and context ring) crossfades in
+ * place instead of re-flowing the composer. `footerKey` names the current
+ * content; the previous node stays mounted, out of flow, for one transition.
+ */
+function PromptInputFooter({
+  content,
+  contentKey = "",
+}: {
+  content: ReactNode;
+  contentKey?: string;
+}) {
+  const [outgoing, setOutgoing] = useState<{
+    key: string;
+    node: ReactNode;
+  } | null>(null);
+  const currentRef = useRef({ key: contentKey, node: content });
+
+  useEffect(() => {
+    const previous = currentRef.current;
+    currentRef.current = { key: contentKey, node: content };
+
+    if (previous.key === contentKey) {
+      return;
+    }
+
+    setOutgoing(previous);
+  }, [content, contentKey]);
+
+  // Its own effect: the one above re-runs on every render (content is a fresh
+  // element each time), so a timer started there would be cleared before it
+  // could ever fire.
+  useEffect(() => {
+    if (!outgoing) {
+      return;
+    }
+
+    const timer = setTimeout(() => setOutgoing(null), footerCrossfadeMs);
+
+    return () => clearTimeout(timer);
+  }, [outgoing]);
+
+  return (
+    <div className="prompt-input__footer" data-slot="prompt-input-footer">
+      {outgoing ? (
+        <div
+          aria-hidden="true"
+          className="prompt-input__footer-layer"
+          data-state="out"
+          key={`out:${outgoing.key}`}
+        >
+          {outgoing.node}
+        </div>
+      ) : null}
+      <div
+        className="prompt-input__footer-layer"
+        data-state={outgoing ? "in" : undefined}
+        key={contentKey}
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Prompt composer over Astryx ChatComposer. The shell, slot layout, send/stop
  * button, and error status are Astryx; the textarea stays native and the
  * neutral footer hint is ours (Astryx status only carries error/warning).
@@ -136,6 +209,11 @@ type ChatPromptInputOwnProps = {
   endActions?: ReactNode;
   drawer?: ReactNode;
   footer?: ReactNode;
+  /**
+   * Names what the footer currently holds. A change crossfades the old
+   * content out and the new one in, in a slot of unchanging height.
+   */
+  footerKey?: string;
   error?: string | null;
   hasAttachments?: boolean;
   /**
@@ -145,6 +223,12 @@ type ChatPromptInputOwnProps = {
    * session-draft empty state keeps its plain border.
    */
   accent?: "brand";
+  /**
+   * Show the static ring on focus as well. Reserved for the session-draft
+   * empty state, where the composer is the page; inside a Session the ring
+   * only marks a run in flight, so focus leaves it transparent.
+   */
+  accentFocusRing?: boolean;
   onSubmit?: () => void;
   onStop?: () => void;
   onValueChange?: (value: string) => void;
@@ -169,9 +253,11 @@ export function ChatPromptInput({
   endActions,
   drawer,
   footer,
+  footerKey,
   error,
   hasAttachments = false,
   accent,
+  accentFocusRing = false,
   onSubmit,
   onStop,
   onValueChange,
@@ -242,6 +328,7 @@ export function ChatPromptInput({
     <div
       className={`prompt-input ${className}`.trim()}
       data-accent={accent}
+      data-accent-focus={accent && accentFocusRing ? "" : undefined}
       data-drop={dragging ? "" : undefined}
       data-slot="prompt-input"
       data-status={status}
@@ -280,11 +367,7 @@ export function ChatPromptInput({
         onStop={onStop}
         onSubmit={handleSubmit}
       />
-      {footer ? (
-        <div className="prompt-input__footer" data-slot="prompt-input-footer">
-          {footer}
-        </div>
-      ) : null}
+      {footer ? <PromptInputFooter content={footer} contentKey={footerKey} /> : null}
     </div>
   );
 }

@@ -687,12 +687,37 @@ body {
    while Live Chat fades in above it. `transform` exists only while
    [data-draft-handoff] is set; the column drops the attribute after
    `--duration-medium` so nothing keeps a stacking context at rest. */
+[data-draft-handoff] {
+  /* Containing block for the exit echo below; only while the handoff runs, so
+     nothing keeps a positioning context at rest. */
+  position: relative;
+}
+
 [data-draft-handoff] .pigui-draft-handoff__composer {
   transform: translateY(var(--pigui-draft-handoff-offset, 0px));
 }
 
 [data-draft-handoff] .pigui-draft-handoff__chat {
   opacity: 0;
+}
+
+/* The draft's title and suggestions, replayed over the Live Session for the
+   length of the handoff: they lift and fade while the composer they framed
+   stays put and slides to the bottom. The echo is out of flow and inert, so
+   it neither moves the Live Session nor takes a click on its way out. */
+[data-draft-handoff] .pigui-draft-handoff__exit {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+[data-draft-handoff="run"] .pigui-draft-handoff__hero,
+[data-draft-handoff="run"] .pigui-draft-handoff__suggestions {
+  opacity: 0;
+  transform: translateY(calc(var(--spacing-2) * -1));
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    transform var(--duration-medium) var(--ease-standard);
 }
 
 [data-draft-handoff="run"] .pigui-draft-handoff__composer {
@@ -711,6 +736,11 @@ body {
     transform: none;
     opacity: 1;
     transition: none;
+  }
+
+  /* Nothing to carry over: the Live Session simply replaces the draft. */
+  [data-draft-handoff] .pigui-draft-handoff__exit {
+    display: none;
   }
 }
 

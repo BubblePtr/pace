@@ -199,6 +199,17 @@ function renderProjectSessions(
   };
 }
 
+/** The ChatPromptInput root inside a composer, where accent/status live. */
+function promptInputShellOf(composer: HTMLElement) {
+  const shell = composer.querySelector<HTMLElement>('[data-slot="prompt-input"]');
+
+  if (!shell) {
+    throw new Error("composer has no prompt input");
+  }
+
+  return shell;
+}
+
 async function chooseProjectFromPicker(
   user: ReturnType<typeof userEvent.setup>,
   projectName: string,
@@ -1614,6 +1625,141 @@ describe("AgentWorkspaceSessionsPage", () => {
     } finally {
       bridgeSpy.mockRestore();
     }
+  });
+
+  it("keeps the composer footer and model chip through the Draft → Live handoff", async () => {
+    const user = userEvent.setup();
+    addProjectToRegistry(pigProjectPath);
+    saveSessionDraft(pigProjectPath, "Keep the composer in place");
+    let releaseBinding = () => {};
+    const promptGate = new Promise<void>((resolve) => {
+      releaseBinding = resolve;
+    });
+    const createBridge = inMemoryBridgeModule.createInMemoryPiRuntimeBridge;
+    // Hold the session before Pi binds it: that is the window where the old
+    // composer dropped its footer line and its model chip.
+    const bridgeSpy = vi
+      .spyOn(inMemoryBridgeModule, "createInMemoryPiRuntimeBridge")
+      .mockImplementation((options) => {
+        const bridge = createBridge(options);
+
+        return {
+          ...bridge,
+          createPiSessionState: async (input) => {
+            await promptGate;
+            return bridge.createPiSessionState(input);
+          },
+        };
+      });
+
+    try {
+      renderProjectSessions("/projects/pig/sessions?view=draft");
+      await screen.findByTestId("session-draft-composer");
+      const draftModelChip = (await screen.findByTestId("model-thinking-trigger"))
+        .textContent;
+
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      const liveComposer = await screen.findByTestId("full-chat-composer");
+      const composerShell = promptInputShellOf(liveComposer);
+      const footer = await waitFor(() => {
+        const row = liveComposer.querySelector<HTMLElement>(
+          '[data-slot="prompt-input-footer"]',
+        );
+
+        if (!row) {
+          throw new Error("the Live composer dropped its footer line");
+        }
+
+        return row;
+      });
+
+      expect(footer).toHaveTextContent("Pig");
+      expect(
+        within(liveComposer).getByTestId("model-thinking-trigger"),
+      ).toHaveTextContent(draftModelChip ?? "");
+      // The ring flows from the moment the draft is handed over.
+      expect(composerShell).toHaveAttribute("data-accent", "brand");
+      expect(composerShell).toHaveAttribute("data-status", "submitted");
+
+      releaseBinding();
+
+      await waitFor(() => expect(getSessionDraft()).toBeNull());
+      expect(
+        liveComposer.querySelector('[data-slot="prompt-input-footer"]'),
+      ).toBeInTheDocument();
+    } finally {
+      bridgeSpy.mockRestore();
+    }
+  });
+
+  it("stops the composer ring once the Session is idle", async () => {
+    const bridge = createInMemoryPiRuntimeBridge({
+      now: () => "2026-06-26T08:12:00.000Z",
+    });
+    const projection = applySessionProjectionEvent(
+      applySessionProjectionEvent(
+        createSessionProjection({
+          id: "settled-session",
+          projectId: "pig-docs",
+          initialPrompt: "Review the first result",
+          createdAt: "2026-06-26T08:00:00.000Z",
+        }),
+        {
+          type: "runtime-bound",
+          stage: "starting runtime",
+          runtimeId: "runtime-settled",
+          piSessionId: "pi-session-settled",
+          occurredAt: "2026-06-26T08:00:01.000Z",
+        },
+      ),
+      {
+        type: "runtime-state-resynced",
+        state: {
+          piSessionId: "pi-session-settled",
+          runtimeId: "runtime-settled",
+          projectId: "pig-docs",
+          cwd: "/Users/void/code/opensource/Pig/docs",
+          status: "idle",
+          events: [],
+          updatedAt: "2026-06-26T08:00:03.000Z",
+        },
+      },
+    );
+
+    render(
+      <AgentWorkspaceSessionsView
+        projectId="pig-docs"
+        runtimeBridge={bridge}
+        sessionProjection={projection}
+        workspace={{
+          id: "pig-docs",
+          name: "Pig Docs",
+          projectRoot: "/Users/void/code/opensource/Pig/docs",
+          repoRoot: "/Users/void/code/opensource/Pig",
+          selectedSessionId: "settled-session",
+          liveMessages: [],
+          runTimeline: [],
+          checkout: {
+            mode: "Foreground local checkout",
+            root: "/Users/void/code/opensource/Pig",
+            runtimeCwd: "/Users/void/code/opensource/Pig/docs",
+          },
+          summary: {
+            model: "gpt-5-codex",
+            totalCostUsd: 0,
+            totalTokens: 0,
+          },
+        }}
+      />,
+    );
+
+    const composerShell = promptInputShellOf(
+      await screen.findByTestId("full-chat-composer"),
+    );
+
+    expect(composerShell).toHaveAttribute("data-accent", "brand");
+    expect(composerShell).toHaveAttribute("data-status", "ready");
   });
 
   it("keeps background events from a created Session out of an unsent Session Draft", async () => {
@@ -4678,7 +4824,9 @@ describe("AgentWorkspaceSessionsPage", () => {
     const nativeProjectSelect = projectPicker.querySelector("select");
 
     expect(draftComposer).toHaveClass("items-center", "justify-center");
-    expect(emptyState).toHaveClass("max-w-[46rem]");
+    // One width from the draft through the Live Session, so the handoff never
+    // resizes the composer.
+    expect(emptyState).toHaveClass("max-w-[44rem]");
     expect(draftComposer.closest(".card")).toBeNull();
     expect(suggestionRoot).toHaveClass("prompt-suggestion--pill");
     expect(suggestionItems).toHaveClass("prompt-suggestion__items--pill");
@@ -8279,10 +8427,15 @@ describe("Context usage placement", () => {
     ).toBeInTheDocument();
   });
 
-  it("meters nothing until a runtime is bound, and drops the footer line", () => {
+  it("meters nothing until a runtime is bound, and keeps the footer line", () => {
     const footer = renderSessionsView(boundProjection({ piSessionId: null }));
 
-    expect(footer).toBeNull();
+    // The line survives Session Creation so the composer keeps its height
+    // through the Draft → Live handoff; only the ring waits for a runtime.
+    expect(footer).toBeInTheDocument();
+    expect(
+      footer?.querySelector('[data-slot="context-usage-meter"]'),
+    ).not.toBeInTheDocument();
   });
 
   function idleSessionChanges(
