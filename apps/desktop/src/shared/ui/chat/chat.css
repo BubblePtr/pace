@@ -894,8 +894,20 @@
   inset: 0;
   border-radius: var(--_chat-composer-radius);
   padding: var(--border-width);
-  background: linear-gradient(90deg, var(--pi-coral), var(--pi-yellow), var(--pi-blue));
-  background-size: 200% 100%;
+  /* One period of the tile spans the visible width, so the static focused
+     ring shows all three colors (not just the first two), and the tile
+     repeats once more so the sending-state flow can loop seamlessly. */
+  background: linear-gradient(
+    90deg,
+    var(--pi-coral) 0%,
+    var(--pi-yellow) 16.667%,
+    var(--pi-blue) 33.333%,
+    var(--pi-coral) 50%,
+    var(--pi-yellow) 66.667%,
+    var(--pi-blue) 83.333%,
+    var(--pi-coral) 100%
+  );
+  background-size: 300% 100%;
   -webkit-mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
@@ -919,12 +931,14 @@
   animation: chat-accent-flow var(--chat-brand-sweep-duration) linear infinite;
 }
 
+/* With a 300% tile, background-position 150% shifts the image by exactly one
+   tile (150% × (100% − 300%) = −300%), so the loop lands on the same pixels. */
 @keyframes chat-accent-flow {
   from {
     background-position: 0% 0;
   }
   to {
-    background-position: 200% 0;
+    background-position: 150% 0;
   }
 }
 
