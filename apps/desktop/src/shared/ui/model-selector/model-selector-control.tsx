@@ -18,6 +18,7 @@ import type {
   RuntimeModelSelection,
   RuntimeThinkingLevel,
 } from "@pace/core";
+import { ProviderMark } from "@/entities/provider/provider-icon";
 import {
   Check,
   ChevronDown,
@@ -550,6 +551,13 @@ export function ModelSelectorControl({
                       isSelected={modelKey(model) === activeKey}
                       key={modelKey(model)}
                       label={model.name}
+                      startContent={
+                        <ProviderMark
+                          className="size-3.5 shrink-0"
+                          providerId={model.provider}
+                          reserveSlot
+                        />
+                      }
                       onClick={(event: React.MouseEvent) => {
                         if (!isControlDisabled && !isSelected) {
                           void submitSelection({
@@ -637,6 +645,12 @@ export function ModelSelectorControl({
         {...rest}
       >
         <span className="flex min-w-0 items-center gap-1.5">
+          {selectedModel ? (
+            <ProviderMark
+              className="size-3.5 shrink-0"
+              providerId={selectedModel.provider}
+            />
+          ) : null}
           {selectedModel && isFastModel(selectedModel) ? (
             <Flash aria-hidden="true" className="size-3.5 shrink-0" />
           ) : null}

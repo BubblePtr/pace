@@ -13,6 +13,7 @@ function renderPromptInput({
   lockInputOnRun,
   hasAttachments,
   drawer,
+  accent,
   onSubmit = () => {},
   onStop,
   onValueChange = () => {},
@@ -25,6 +26,7 @@ function renderPromptInput({
   lockInputOnRun?: boolean;
   hasAttachments?: boolean;
   drawer?: ReactNode;
+  accent?: "brand";
   onSubmit?: () => void;
   onStop?: () => void;
   onValueChange?: (value: string) => void;
@@ -33,6 +35,7 @@ function renderPromptInput({
 } = {}) {
   return render(
     <ChatPromptInput
+      accent={accent}
       allowSubmitWhileRunning={allowSubmitWhileRunning}
       drawer={drawer}
       error={error}
@@ -65,6 +68,19 @@ describe("ChatPromptInput", () => {
     expect(textarea).toHaveAttribute("data-slot", "prompt-input-textarea");
     expect(screen.getByText("footer text")).toBeInTheDocument();
     expect(screen.getByText("start")).toBeInTheDocument();
+  });
+
+  it("has no accent attribute by default, opting into the brand accent explicitly", () => {
+    const { container: withoutAccent } = renderPromptInput();
+    expect(
+      withoutAccent.querySelector('[data-slot="prompt-input"]'),
+    ).not.toHaveAttribute("data-accent");
+
+    const { container: withAccent } = renderPromptInput({ accent: "brand" });
+    expect(withAccent.querySelector('[data-slot="prompt-input"]')).toHaveAttribute(
+      "data-accent",
+      "brand",
+    );
   });
 
   it("surfaces errors through the Astryx composer status", () => {

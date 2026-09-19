@@ -48,11 +48,13 @@
 <PromptInput status="loading" … />
 ```
 
-外壳使用 Astryx `ChatComposer elevation="low"`，保留既有底色、24px 外观圆角对应的 token 计算和内容间距；不再使用 flat 变体的 border / inset ring。纯外阴影仅在 `chat.css` 的 Composer 作用域内定义，不影响 TextInput；neutral 默认 elevation token 在深色下带 inset 高光，因此这里用 `--color-shadow` 与 spacing token 组合替代。默认、悬停、聚焦保持同一层阴影，文件拖入时外阴影带强调色，不另加描边；强制颜色模式保留系统色聚焦轮廓。组件参数不增加外观选项；Design 的既有 ready / streaming / error 示例直接反映当前样式。
+外壳使用 Astryx `ChatComposer elevation="low"`，保留既有底色、24px 外观圆角对应的 token 计算和内容间距；不再使用 flat 变体的 border / inset ring。纯外阴影仅在 `chat.css` 的 Composer 作用域内定义，不影响 TextInput；neutral 默认 elevation token 在深色下带 inset 高光，因此这里用 `--color-shadow` 与 spacing token 组合替代。默认、悬停、聚焦保持同一层阴影，文件拖入时外阴影带强调色，不另加描边；强制颜色模式保留系统色聚焦轮廓。Design 的既有 ready / streaming / error 示例直接反映当前样式。
+
+`accent="brand"`（可选，home-hero）在外壳上加一圈 1px 珊瑚→黄→蓝渐变描边：聚焦时静止显示，`status` 为 `submitted`/`streaming`（发送中）时缓慢流动，空闲不聚焦时完全透明、不改变尺寸；`prefers-reduced-motion` 下描边保留但不流动。用遮罩后的 `::after` 伪元素实现，不加真实 `border`（会挤占既有 padding/圆角计算）。只有 `agent-workspace.tsx` 的空 draft composer 传这个 prop；会话内的 composer 保持默认边框。颜色来自 `apps/desktop/src/app/styles.css` 的 `--pi-coral` / `--pi-yellow` / `--pi-blue`（docs/design/brand.md）。
 
 ### 其余 Composer 件
 
-- `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态），点选后把文案填入草稿并聚焦输入框。
+- `ChatPromptSuggestion` + `.Items` + `.Item`：空草稿时的建议卡（agent-workspace 的空 draft 态，project picker 下方，`SESSION_DRAFT_SUGGESTED_PROMPTS`），点选后把文案填入草稿并聚焦输入框。文案是编码任务示例（`Explain this repo's architecture` / `Fix the failing test` / `Add a CLI flag with docs` / `Review my uncommitted changes`），不是通用文案——Pace 是编码 agent 工作台，README 截图里不该出现 "Design a launch page" 这类无关示例。
 - `ChatQueuedMessage`：队列里的一条；`presence: "none" | "enter" | "exit"` 由 `usePresenceList` 给，不要自己传 `"enter"`。只有 `pending` 的整卡 `draggable`；拖动中 `isDragging`（45% 透明），目标位 `dropTarget: "before" | "after"`（顶/底边 accent 线，由指针落在卡片上半或下半决定）。`isWithdrawn` 显示 "Withdrawn"，`isSteered` 显示 "Steered"；两者都是终态，无动作、不可拖。重排 RPC 进行中卡片不可拖、drop 忽略。Pi follow-up mode 为 `all` 时整卡不可拖、drop 忽略。
 - `ModelSelectorControl`：选中项来自 projection；冷会话缺少目录时异步读取 `list_available_model_controls`，不启动 Agent，读取失败不阻塞历史或发送。真正切换模型会准备运行环境。`isDisabled` 在队列模式或提交等待期间为 true；`visibleModels` 空数组 = 全显。当前选中模型即使被隐藏也保留并标注。没有第二个模型选择器，失败卡里的 `modelControl` 插槽也用它。
 - `ComposerInsertMenu`：一级只有 Add files / Use skill / Chat commands / Use plugin 四项；技能与插件走 `CommandPalette` 搜索。`commands` 默认 `/compact` `/clear`。
@@ -89,5 +91,7 @@
  ├── 一行 step → ChatThoughtStep / ChatToolStep（自带 shimmer 与翻页）
  └── 文字级占位 → <TextShimmer>；不要再放 ChatPixelLoader，心跳全局只有状态行一处
 ```
+
+`TextShimmer` 默认 `tone="default"`：灰色扫光，`Thinking…` / `Loading history…` / `Sending message…` 等运行态占位都用它，`prefers-reduced-motion` 下退化为静态灰字。`tone="brand"` 是 home-hero 专属：珊瑚→黄→蓝扫光，唯一用处是空 draft 态标题里的 "Pace" 字样，reduced motion 下退化为静态三色渐变（不是灰色）。不要把 `tone="brand"` 用在运行态占位上——颜色只标记"Pi 在场"，见 docs/design/brand.md。
 
 打开已有 Session 时先读历史快照；`agent-workspace.tsx` 在消息列表末尾渲染一行 `role="status"` 的 `<TextShimmer>Loading history…</TextShimmer>`（`data-testid="session-history-status"`），与创建阶段的 `session-creation-status` 同一形态；读取成功或失败后移除。已有时间线保持可见，冷会话不因此恢复运行环境。历史读取失败使用原有 Retry；执行准备失败在 composer 显示。不要为它引入骨架屏或 Spinner。

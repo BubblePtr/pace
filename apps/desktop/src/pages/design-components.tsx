@@ -1506,6 +1506,7 @@ function PromptInputDemo({
   status?: "ready" | "submitted" | "streaming" | "error";
   lockInputOnRun?: boolean;
   error?: string;
+  accent?: "brand";
 }) {
   const [value, setValue] = useState(initialValue);
 
@@ -1578,6 +1579,16 @@ function ChatPromptInputGallery() {
           caption="status=error"
           error="Runtime rejected the prompt"
           status="error"
+        />
+        <PromptInputDemo
+          caption="accent=brand, status=ready (focus the field to see the ring)"
+          accent="brand"
+        />
+        <PromptInputDemo
+          caption="accent=brand, status=submitted (flowing ring, opt-in only on the session-draft empty state)"
+          accent="brand"
+          lockInputOnRun
+          status="submitted"
         />
       </VariantRow>
     </GallerySection>
@@ -2217,6 +2228,11 @@ function TextShimmerGallery() {
     <GallerySection title="TextShimmer">
       <Variant caption="loading placeholder text">
         <TextShimmer>Waiting for the runtime…</TextShimmer>
+      </Variant>
+      <Variant caption="tone=brand — Pi is present (session-draft empty state title only)">
+        <span className="text-3xl">
+          <TextShimmer tone="brand">Pace</TextShimmer>
+        </span>
       </Variant>
     </GallerySection>
   );

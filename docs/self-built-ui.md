@@ -24,7 +24,7 @@
 | chat-tool-step | `shared/ui/chat/` | 一批 Tool Call 作为一行 step(#164,ADR-0030 第 3/4 条):live 时 label 是「Running {正在跑的工具}…」,随 `activeToolCallId` 翻页(#165 给 `message_part` 加了可选 `toolName`,名字在 part(start) 就有,不必等执行开始;拿不到名字的桥仍退化为「Running…」);收束为动词总结行——单工具「动词 + 对象」(路径保尾、命令保头、72 字截断),多工具按工具类型归并计数(bash / shell → Ran N commands,read / read_file → Read N files,edit / write / write_file → Edited / Wrote N files,grep / find / ls → Searched / Listed,web_search → Searched N web pages,其余 → Used N tools),行末失败数(`--color-danger`)与总耗时。总结行与展开后的每行都带 `ChatToolKindIcon`;多工具展开是每个工具各自的 `ChatToolGroup` 单行,字体字号与总结行一致(覆盖 Astryx 的代码字体与缩小字号,不分层级);单工具的总结行本身已是那条生产行,展开直接给出 args / output(`ChatToolDetail`),不再多一层需要再点一次的重复标题 |
 | chat-status-line | `shared/ui/chat/` | run 期间的最后一行(#164):像素 loader + 带 shimmer 的状态词 + 走表计时。状态词由 elapsed 每 4s 取一个(thinking / acting 两个词池,同一间隔稳定、跨间隔伪随机,不用自己的计时器)。`elapsedMs` 可缺省(retry 间隙没有锚点):心跳和状态词照常,只是不渲染时钟——写「0.0s」等于宣称 run 刚开始。它是情绪层,信息在 step 行里;心跳全局只有这一处 |
 | chat-thought-markdown | `shared/ui/chat/` | 思考正文的流式安全行内 markdown(`**` / `*` / 反引号);Astryx Markdown 过重且会把未闭合标记露出来 |
-| text-shimmer | `shared/ui/chat/` | 流式占位闪光 |
+| text-shimmer | `shared/ui/chat/` | 流式占位闪光；`tone="default"`(灰,原样式)/`"brand"`(home-hero 专属的珊瑚→黄→蓝扫光,仅空 draft 标题的 "Pace") |
 | chat-prompt-suggestion | `shared/ui/chat/` | **在用**(agent-workspace 空 draft 建议卡;2026-08-09 核实,此前误判候删) |
 | chat-queued-message | `shared/ui/chat/` | 等待区 item(queue-first composer,2026-08-12 原型探索胜出);Astryx 无队列概念;pending 可拖、可 Steer/Withdraw;steered 显示 "Steered"、withdrawn 显示 "Withdrawn"，都是终态无动作。决策记录 `.scratch/composer-redesign/PRD.md` |
 | use-presence-list | `shared/ui/chat/use-presence-list.ts` | 列表行进出场的 presence hook(2026-09-06 动效打磨):首帧不播进场(已排队的行在页面加载时静止),之后插入标 `enter`、移除标 `exit` 并保留到 `transitionend`(带超时兜底),减动效下立即增删;重新加回正在退场的行取消退场而不重播进场。`ChatQueuedMessage` 与 `SessionSurfaceTabs` 共用;不引入 Motion 库(决策:项目无手势驱动交互,纯 CSS transition 已可中断) |
@@ -77,6 +77,8 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 比不画更误导。Astryx `ProgressBar` 的 `marks` prop 已经就位,等 SDK 能读到设置即可补。
 
 ## 维护规则
+
+- **2026-09-19 home-hero 品牌锚点**：`TextShimmer` 新增 `tone="brand"` 变体（珊瑚→黄→蓝，reduced-motion 退化为静态三色而非灰色），只用于空 draft 标题的 "Pace"，去掉了外层 `text-muted` span；`ChatPromptInput` 新增可选 `accent="brand"`，聚焦/发送中出现 1px 三色描边（遮罩 `::after`，不占布局），只有空 draft composer 传它。三色 token `--pi-coral` / `--pi-blue` / `--pi-yellow` 注册在 `apps/desktop/src/app/styles.css`，浅色主题用 CSS 相对颜色语法压暗。两者均已在 Design 页登记（TextShimmer、ChatPromptInput 条目）。Review 决定不新增第二个建议 chip 行（与既有 `SESSION_DRAFT_SUGGESTED_PROMPTS` 建议网格重复）；改为把那个既有网格的文案从通用示例（"Design a launch page" 等）换成编码任务（"Explain this repo's architecture" / "Fix the failing test" / "Add a CLI flag with docs" / "Review my uncommitted changes"），图标同步换成 `ListTree` / `Wrench` / `SquareTerminal` / `FileDiff`；未新增共享组件或 Design 变体。规则见 [对话与 Composer](design/chat.md)、[品牌资源](design/brand.md)。
 
 - **2026-09-14 历史与执行解耦（#304）**：历史读取及首次发送等待复用 TextShimmer、ChatPromptInput 的已有状态，冷会话模型目录复用 ModelSelectorControl；只调整页面组合，未新增共享组件或变体，无需新增 Design 条目。规则见 [对话与 Composer](design/chat.md)。
 

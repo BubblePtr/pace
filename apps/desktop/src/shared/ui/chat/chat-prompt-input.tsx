@@ -138,6 +138,13 @@ type ChatPromptInputOwnProps = {
   footer?: ReactNode;
   error?: string | null;
   hasAttachments?: boolean;
+  /**
+   * Opt-in Pi-mark border (docs/design/brand.md): a 1px coral/yellow/blue
+   * gradient ring that appears on focus and animates while `status` is
+   * submitted/streaming. Undeclared by default so every composer but the
+   * session-draft empty state keeps its plain border.
+   */
+  accent?: "brand";
   onSubmit?: () => void;
   onStop?: () => void;
   onValueChange?: (value: string) => void;
@@ -164,6 +171,7 @@ export function ChatPromptInput({
   footer,
   error,
   hasAttachments = false,
+  accent,
   onSubmit,
   onStop,
   onValueChange,
@@ -233,6 +241,7 @@ export function ChatPromptInput({
   return (
     <div
       className={`prompt-input ${className}`.trim()}
+      data-accent={accent}
       data-drop={dragging ? "" : undefined}
       data-slot="prompt-input"
       data-status={status}

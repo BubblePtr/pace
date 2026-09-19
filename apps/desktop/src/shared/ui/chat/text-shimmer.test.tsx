@@ -17,4 +17,22 @@ describe("TextShimmer", () => {
 
     expect(screen.getByText("Loading")).toHaveClass("text-shimmer", "custom");
   });
+
+  it("defaults to the default tone without the brand class", () => {
+    render(<TextShimmer>Pace</TextShimmer>);
+
+    const shimmer = screen.getByText("Pace");
+
+    expect(shimmer).toHaveAttribute("data-tone", "default");
+    expect(shimmer).not.toHaveClass("text-shimmer--brand");
+  });
+
+  it("renders the brand tone with its own class and data attribute", () => {
+    render(<TextShimmer tone="brand">Pace</TextShimmer>);
+
+    const shimmer = screen.getByText("Pace");
+
+    expect(shimmer).toHaveClass("text-shimmer", "text-shimmer--brand");
+    expect(shimmer).toHaveAttribute("data-tone", "brand");
+  });
 });
