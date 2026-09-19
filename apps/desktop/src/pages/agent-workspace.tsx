@@ -733,11 +733,26 @@ function QueuedMessageList({
   );
 }
 
+/**
+ * Last model catalog read in this renderer. The Session Draft reads it before
+ * any Session exists, so the Live composer can paint the same model chip on
+ * its first frame of the Draft → Live handoff instead of blanking the control
+ * until its own read returns.
+ */
+let cachedModelCatalog: RuntimeModelControls["models"] = [];
+
+function rememberModelCatalog(models: RuntimeModelControls["models"]) {
+  if (models.length) {
+    cachedModelCatalog = models;
+  }
+}
+
 function FullChatComposer({
   queueMode = false,
   isCreating = false,
   isStoppingRun = false,
   projection,
+  projectLabel,
   sessionChanges: providedSessionChanges,
   onPromptSubmit,
   onQueueSubmit,
@@ -753,6 +768,8 @@ function FullChatComposer({
   isCreating?: boolean;
   isStoppingRun?: boolean;
   projection?: SessionProjection | null;
+  /** Project name for the footer line while Pi has not bound a session yet. */
+  projectLabel?: string | null;
   sessionChanges?: SessionChangesView;
   onPromptSubmit?: (message: string, images?: RuntimePromptImage[]) => Promise<void> | void;
   onQueueSubmit?: (message: string, images?: RuntimePromptImage[]) => Promise<void> | void;
@@ -767,18 +784,29 @@ function FullChatComposer({
   // Read once per mount: Settings owns this set and the composer only remounts
   // after leaving that page (issue #102).
   const [visibleModels] = useState(getVisibleModels);
-  const [availableModels, setAvailableModels] = useState<RuntimeModelControls["models"]>([]);
-  const needsModelCatalog = Boolean(projection?.piSessionId && !projection.modelControls?.models.length);
+  const [availableModels, setAvailableModels] =
+    useState<RuntimeModelControls["models"]>(() => cachedModelCatalog);
+  const needsModelCatalog =
+    !projection?.modelControls?.models.length &&
+    Boolean(projection?.piSessionId || isCreating);
+  // Session Creation has no controls of its own yet, so the chip keeps showing
+  // what the Draft was set to — the same selection this Session starts with.
   const composerModelControls = projection?.modelControls?.models.length
     ? projection.modelControls
     : availableModels.length
-      ? { models: availableModels, selected: projection?.modelControls?.selected ?? null }
+      ? {
+          models: availableModels,
+          selected:
+            projection?.modelControls?.selected ??
+            (isCreating ? getLastModelSelection() : null),
+        }
       : projection?.modelControls;
 
   useEffect(() => {
     if (!needsModelCatalog) return;
     let cancelled = false;
     void invoke<RuntimeModelControls>("list_available_model_controls").then((controls) => {
+      rememberModelCatalog(controls.models);
       if (!cancelled) setAvailableModels(controls.models);
     }).catch(() => {
       // An unavailable catalog must not prevent reading history or sending a prompt.
@@ -948,6 +976,14 @@ function FullChatComposer({
   // rather than any composer control. Only a bound runtime has a context
   // window to be a share of. Git branch status sits on the same row, left of
   // the ring, in the same ghost-Selector chrome as the draft Project picker.
+  //
+  // The line itself is unconditional: during Session Creation it names the
+  // Project the Draft chose, so binding Pi swaps the content of a row that was
+  // already there instead of pushing the composer up (Draft → Live handoff).
+  const chatProject = isChatProjectId(projection?.projectId ?? "");
+  const creationProjectLabel = chatProject
+    ? CHAT_WORKSPACE_DISPLAY_NAME
+    : projectLabel;
   const composerFooter = projection?.piSessionId ? (
     <span className="flex w-full min-w-0 items-center gap-2">
       {gitBranchLabel ? (
@@ -957,7 +993,7 @@ function FullChatComposer({
           occupiedBranches={sessionGitChanges?.occupiedBranches ?? []}
           onBranchChange={(next) => void switchSessionBranch(next)}
         />
-      ) : isChatProjectId(projection.projectId) ? (
+      ) : chatProject ? (
         <span className="text-xs text-muted" data-testid="live-session-chat-label">
           {CHAT_WORKSPACE_DISPLAY_NAME}
         </span>
@@ -969,7 +1005,30 @@ function FullChatComposer({
         />
       </span>
     </span>
-  ) : undefined;
+  ) : (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      {creationProjectLabel ? (
+        <span
+          className="inline-flex min-w-0 items-center gap-1.5 px-2 text-xs text-muted"
+          data-testid="live-session-creation-target"
+        >
+          {chatProject ? (
+            <ChatAdd aria-hidden="true" className="size-4 shrink-0" />
+          ) : (
+            <FolderClosed aria-hidden="true" className="size-4 shrink-0" />
+          )}
+          <span className="truncate">{creationProjectLabel}</span>
+        </span>
+      ) : null}
+    </span>
+  );
+  // What the row holds, so a swap crossfades in place: the Project the Draft
+  // named, then the bound Session, then its branch once Git answers.
+  const composerFooterKey = !projection?.piSessionId
+    ? "creation-target"
+    : gitBranchLabel
+      ? "branch"
+      : "bound";
 
   return (
     <div
@@ -989,6 +1048,7 @@ function FullChatComposer({
         />
       ) : null}
       <PromptInput
+        accent="brand"
         allowSubmitWhileRunning={queueMode && !isSubmitting}
         className="mx-auto w-full max-w-[44rem]"
         drawer={
@@ -999,6 +1059,7 @@ function FullChatComposer({
         }
         error={attachments.error ?? composerError}
         footer={composerFooter}
+        footerKey={composerFooterKey}
         hasAttachments={attachments.items.length > 0}
         lockInputOnRun={!queueMode || isSubmitting}
         startActions={
@@ -1013,7 +1074,7 @@ function FullChatComposer({
             {composerModelControls && onModelConfigChange ? (
               <ModelSelectorControl
                 controls={composerModelControls}
-                isDisabled={queueMode || isSubmitting}
+                isDisabled={queueMode || isSubmitting || isCreating}
                 visibleModels={visibleModels}
                 onChange={onModelConfigChange}
                 onManageModels={onManageModels}
@@ -2025,6 +2086,75 @@ function SessionCreationFailureDetail({
   );
 }
 
+/**
+ * Title and suggestion grid of the Session Draft. Both are shared with the
+ * handoff echo below, which replays them on their way out, so the copy and
+ * spacing can only ever be stated once.
+ */
+function SessionDraftHero() {
+  return (
+    <div className="pigui-draft-handoff__hero flex flex-col items-center gap-2 text-center">
+      <h2 className="text-center text-3xl font-normal tracking-tight text-foreground">
+        Build something useful with{" "}
+        <TextShimmer tone="brand">Pace</TextShimmer>
+      </h2>
+    </div>
+  );
+}
+
+function SessionDraftSuggestions({
+  onSelect,
+}: {
+  onSelect?: (prompt: string) => void;
+}) {
+  return (
+    <PromptSuggestion className="pigui-draft-handoff__suggestions w-full max-w-[35rem]">
+      <PromptSuggestion.Items className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {SESSION_DRAFT_SUGGESTED_PROMPTS.map(({ Icon, id, label, prompt }) => (
+          <PromptSuggestion.Item
+            key={id}
+            className="items-center justify-start"
+            showEndIcon={false}
+            onPress={() => onSelect?.(prompt)}
+          >
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <Icon
+                aria-hidden="true"
+                className="size-4 shrink-0"
+                data-testid="session-draft-suggestion-icon"
+              />
+              <span className="truncate">{label}</span>
+            </span>
+          </PromptSuggestion.Item>
+        ))}
+      </PromptSuggestion.Items>
+    </PromptSuggestion>
+  );
+}
+
+/**
+ * What the Session Draft leaves behind for the length of the handoff: the
+ * title and the suggestion grid drift up and fade while the Live composer
+ * settles into the space the draft composer held (the spacer keeps that
+ * space, so nothing below the title moves). Inert and hidden from assistive
+ * tech — the interactive Draft is already gone.
+ */
+function SessionDraftExitEcho({ composerHeight }: { composerHeight: number }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="pigui-draft-handoff__exit flex h-full min-h-0 flex-col items-center justify-center px-6 py-8"
+      inert
+    >
+      <div className="flex w-full max-w-[44rem] flex-col items-center justify-center gap-6">
+        <SessionDraftHero />
+        <div className="w-full" style={{ height: `${composerHeight}px` }} />
+        <SessionDraftSuggestions />
+      </div>
+    </div>
+  );
+}
+
 function SessionDraftComposer({
   draft,
   projects,
@@ -2076,6 +2206,9 @@ function SessionDraftComposer({
 
     void invoke<RuntimeModelControls>("list_available_model_controls")
       .then((controls) => {
+        // Shared with the Live composer so the handoff keeps the same chip.
+        rememberModelCatalog(controls.models);
+
         if (!cancelled) {
           setDraftModelControls(
             overlayPreferredModel(controls, [
@@ -2121,6 +2254,12 @@ function SessionDraftComposer({
       return;
     }
 
+    // The Live composer reads this back while the Session is being created,
+    // so the model chip does not blank out during the handoff.
+    if (draftModelControls?.selected) {
+      saveLastModelSelection(draftModelControls.selected);
+    }
+
     onDraftSubmit({
       projectId: draft.projectId,
       prompt: built.prompt,
@@ -2150,18 +2289,14 @@ function SessionDraftComposer({
       data-testid="session-draft-composer"
     >
       <div
-        className="flex w-full max-w-[46rem] flex-col items-center justify-center gap-6"
+        className="flex w-full max-w-[44rem] flex-col items-center justify-center gap-6"
         data-testid="session-draft-empty-state"
       >
-        <div className="flex flex-col items-center gap-2 text-center">
-          <h2 className="text-center text-3xl font-normal tracking-tight text-foreground">
-            Build something useful with{" "}
-            <TextShimmer tone="brand">Pace</TextShimmer>
-          </h2>
-        </div>
+        <SessionDraftHero />
         <div className="flex w-full flex-col gap-3">
           <PromptInput
             accent="brand"
+            accentFocusRing
             className="w-full"
             drawer={
               <ComposerAttachmentDrawer
@@ -2170,6 +2305,28 @@ function SessionDraftComposer({
               />
             }
             error={attachments.error}
+            footer={
+              <div
+                className="flex w-full flex-wrap justify-start gap-2"
+                data-testid="session-draft-project-picker"
+              >
+                <ProjectPicker
+                  error={targetError}
+                  projects={projects}
+                  selectedProjectId={draft.projectId}
+                  onProjectChange={(projectId) => {
+                    onDraftTargetChange(projectId);
+                  }}
+                />
+                {!draft.projectId || isChatProjectId(draft.projectId) ? null : (
+                  <CheckoutStrategyPicker
+                    selectedCheckoutMode={selectedCheckoutMode}
+                    onCheckoutModeChange={onDraftCheckoutModeChange}
+                  />
+                )}
+              </div>
+            }
+            footerKey="draft-target"
             hasAttachments={attachments.items.length > 0}
             inputRef={draftInputRef}
             placeholder="Do anything with Pi"
@@ -2210,25 +2367,6 @@ function SessionDraftComposer({
             onSubmit={submitDraft}
             onValueChange={onDraftChange}
           />
-          <div
-            className="flex w-full flex-wrap justify-start gap-2"
-            data-testid="session-draft-project-picker"
-          >
-            <ProjectPicker
-              error={targetError}
-              projects={projects}
-              selectedProjectId={draft.projectId}
-              onProjectChange={(projectId) => {
-                onDraftTargetChange(projectId);
-              }}
-            />
-            {!draft.projectId || isChatProjectId(draft.projectId) ? null : (
-              <CheckoutStrategyPicker
-                selectedCheckoutMode={selectedCheckoutMode}
-                onCheckoutModeChange={onDraftCheckoutModeChange}
-              />
-            )}
-          </div>
           {creationProjection ? (
             <div
               aria-live="polite"
@@ -2245,27 +2383,7 @@ function SessionDraftComposer({
             </div>
           ) : null}
         </div>
-        <PromptSuggestion className="w-full max-w-[35rem]">
-          <PromptSuggestion.Items className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SESSION_DRAFT_SUGGESTED_PROMPTS.map(({ Icon, id, label, prompt }) => (
-              <PromptSuggestion.Item
-                key={id}
-                className="items-center justify-start"
-                showEndIcon={false}
-                onPress={() => applySuggestedPrompt(prompt)}
-              >
-                <span className="inline-flex min-w-0 items-center gap-2">
-                  <Icon
-                    aria-hidden="true"
-                    className="size-4 shrink-0"
-                    data-testid="session-draft-suggestion-icon"
-                  />
-                  <span className="truncate">{label}</span>
-                </span>
-              </PromptSuggestion.Item>
-            ))}
-          </PromptSuggestion.Items>
-        </PromptSuggestion>
+        <SessionDraftSuggestions onSelect={applySuggestedPrompt} />
       </div>
     </section>
   );
@@ -2903,6 +3021,10 @@ function LiveSessionColumn({
   // draft so only that handoff plays the composer settle, not a sidebar click.
   const draftHandoffPendingRef = useRef(false);
   const [draftHandoff, setDraftHandoff] = useState<"measure" | "run" | null>(null);
+  // Where the draft composer sat when it was submitted, in viewport
+  // coordinates: the Live composer starts there instead of at a guessed
+  // centre, so the two never appear at different heights.
+  const draftComposerRectRef = useRef<{ top: number; height: number } | null>(null);
   const columnRef = useRef<HTMLElement | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
   const [liveClockNowMs, setLiveClockNowMs] = useState(() => Date.now());
@@ -2941,8 +3063,8 @@ function LiveSessionColumn({
     setDraftHandoff("measure");
   }, [showDraft]);
 
-  // First frame: park the composer where the draft composer sat (vertically
-  // centred). Next frame: release it so the transition carries it down.
+  // First frame: park the composer where the draft composer sat. Next frame:
+  // release it so the transition carries it down.
   useLayoutEffect(() => {
     if (draftHandoff !== "measure") {
       return;
@@ -2950,12 +3072,13 @@ function LiveSessionColumn({
 
     const column = columnRef.current;
     const composer = column?.querySelector<HTMLElement>(
-      '[data-testid="full-chat-composer"]',
+      '[data-testid="full-chat-composer"] [data-slot="prompt-input"]',
     );
+    const draftRect = draftComposerRectRef.current;
 
-    if (column && composer) {
-      const offset = Math.max(0, (column.clientHeight - composer.offsetHeight) / 2);
-      column.style.setProperty("--pigui-draft-handoff-offset", `${-offset}px`);
+    if (column && composer && draftRect) {
+      const offset = draftRect.top - composer.getBoundingClientRect().top;
+      column.style.setProperty("--pigui-draft-handoff-offset", `${offset}px`);
     }
 
     const frame = requestAnimationFrame(() => setDraftHandoff("run"));
@@ -2970,6 +3093,7 @@ function LiveSessionColumn({
 
     const timer = setTimeout(() => {
       columnRef.current?.style.removeProperty("--pigui-draft-handoff-offset");
+      draftComposerRectRef.current = null;
       setDraftHandoff(null);
     }, draftHandoffMs);
 
@@ -3155,6 +3279,15 @@ function LiveSessionColumn({
     setSessionDraft(setSessionDraftTarget(targetProjectId));
   };
   const handleDraftSubmit = async (event: SessionDraftSubmitEvent) => {
+    const draftComposer = columnRef.current?.querySelector<HTMLElement>(
+      '[data-testid="session-draft-composer"] [data-slot="prompt-input"]',
+    );
+
+    if (draftComposer) {
+      const rect = draftComposer.getBoundingClientRect();
+      draftComposerRectRef.current = { top: rect.top, height: rect.height };
+    }
+
     const draft = getSessionDraft({ projectIds });
 
     if (!draft?.projectId) {
@@ -3862,6 +3995,11 @@ function LiveSessionColumn({
         />
       ) : (
         <>
+          {draftHandoff && draftComposerRectRef.current ? (
+            <SessionDraftExitEcho
+              composerHeight={draftComposerRectRef.current.height}
+            />
+          ) : null}
           {runtimeUnavailableProjection ? (
             <div
               className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-muted"
@@ -3975,6 +4113,10 @@ function LiveSessionColumn({
               isStoppingRun={stoppingRun}
               queueMode={queueMode}
               projection={liveProjection}
+              projectLabel={
+                projects.find((project) => project.id === liveProjection?.projectId)
+                  ?.displayName ?? null
+              }
               sessionChanges={sessionChanges}
               onPromptSubmit={handlePromptSubmit}
               onQueueSubmit={handleQueueSubmit}

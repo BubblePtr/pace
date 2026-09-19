@@ -866,15 +866,64 @@
   cursor: not-allowed;
 }
 
+/* A stable slot, not a conditional line: the footer keeps one control row of
+   height from the Session Draft through the Live Session, so binding a Pi
+   session swaps what it holds without moving the composer. Only the outgoing
+   layer leaves the flow, so the current content can still grow (a picker's
+   error message) without being clipped. */
 .prompt-input__footer {
-  text-align: center;
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--size-element-sm);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
 
+.prompt-input__footer-layer {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  width: 100%;
+  opacity: 1;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+/* Only a replacement fades in; the first footer of a composer is simply
+   there, so opening a Session does not animate a line that never changed. */
+@starting-style {
+  .prompt-input__footer-layer[data-state="in"] {
+    opacity: 0;
+  }
+}
+
+.prompt-input__footer-layer[data-state="out"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@starting-style {
+  .prompt-input__footer-layer[data-state="out"] {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-input__footer-layer {
+    transition: none;
+  }
+
+  .prompt-input__footer-layer[data-state="out"] {
+    display: none;
+  }
+}
+
 /* —— Prompt input, brand accent ——
-   Opt-in Pi-mark ring (docs/design/brand.md); only the session-draft empty
-   state composer sets accent="brand". A masked ::after ring keeps the
+   Opt-in Pi-mark ring (docs/design/brand.md). The session-draft empty state
+   adds accentFocusRing so the ring also answers focus; inside a Session it
+   only marks a run in flight. A masked ::after ring keeps the
    gradient to a 1px border without adding layout size - the alternative,
    an actual `border`, would shift the composer's padding/geometry that the
    shell's radius math above depends on. Idle state (no focus, not sending)
@@ -918,14 +967,15 @@
   transition: opacity var(--duration-fast) ease;
 }
 
-.prompt-input[data-accent="brand"] .astryx-chat-composer:focus-within::after,
+.prompt-input[data-accent="brand"][data-accent-focus] .astryx-chat-composer:focus-within::after,
 .prompt-input[data-accent="brand"][data-status="submitted"] .astryx-chat-composer::after,
 .prompt-input[data-accent="brand"][data-status="streaming"] .astryx-chat-composer::after {
   opacity: 1;
 }
 
-/* Flowing gradient only while actually sending; a focused-but-idle ring
-   stays static so the accent doesn't read as busy when it isn't. */
+/* Flowing gradient only while actually sending — Session Creation included,
+   which reaches the composer as `submitted`; a focused-but-idle ring stays
+   static so the accent doesn't read as busy when it isn't. */
 .prompt-input[data-accent="brand"][data-status="submitted"] .astryx-chat-composer::after,
 .prompt-input[data-accent="brand"][data-status="streaming"] .astryx-chat-composer::after {
   animation: chat-accent-flow var(--chat-brand-sweep-duration) linear infinite;

@@ -78,6 +78,8 @@ AgentSession 只暴露了 `isAutoCompactionEnabled`,拿不到具体数值——�
 
 ## 维护规则
 
+- **2026-09-19 Draft → Live composer 交接**：`ChatPromptInput` 的 `footer` 升级为恒定高度的稳定插槽，新增 `footerKey`（内容切换时 crossfade，只有离场层脱离文档流）与 `accentFocusRing`（把"聚焦显示静止描边"从 `accent="brand"` 里拆出来，只给空 draft）。两者已在 Design 页 ChatPromptInput 条目登记（footer 插槽切换示例 + 两种 accent 变体）。页面侧只做组合：draft 的 Project / Checkout 选择器移进 composer footer，draft 与 live 统一 44rem，live composer 开 `accent="brand"`，创建期 footer 显示目标项目、模型选择器沿用 draft 的选择；交接时 draft 的标题与建议网格作为 inert 回声（`SessionDraftExitEcho`）淡出上移，不新增共享组件。规则见 [对话与 Composer](design/chat.md)，决策见 `.scratch/draft-live-handoff/PRD.md`。
+
 - **2026-09-19 home-hero 品牌锚点**：`TextShimmer` 新增 `tone="brand"` 变体（珊瑚→黄→蓝，reduced-motion 退化为静态三色而非灰色），只用于空 draft 标题的 "Pace"，去掉了外层 `text-muted` span；`ChatPromptInput` 新增可选 `accent="brand"`，聚焦/发送中出现 1px 三色描边（遮罩 `::after`，不占布局），只有空 draft composer 传它。三色 token `--pi-coral` / `--pi-blue` / `--pi-yellow` 注册在 `apps/desktop/src/app/styles.css`，浅色主题用 CSS 相对颜色语法压暗。两者均已在 Design 页登记（TextShimmer、ChatPromptInput 条目）。Review 决定不新增第二个建议 chip 行（与既有 `SESSION_DRAFT_SUGGESTED_PROMPTS` 建议网格重复）；改为把那个既有网格的文案从通用示例（"Design a launch page" 等）换成编码任务（"Explain this repo's architecture" / "Fix the failing test" / "Add a CLI flag with docs" / "Review my uncommitted changes"），图标同步换成 `ListTree` / `Wrench` / `SquareTerminal` / `FileDiff`；未新增共享组件或 Design 变体。规则见 [对话与 Composer](design/chat.md)、[品牌资源](design/brand.md)。
 
 - **2026-09-14 历史与执行解耦（#304）**：历史读取及首次发送等待复用 TextShimmer、ChatPromptInput 的已有状态，冷会话模型目录复用 ModelSelectorControl；只调整页面组合，未新增共享组件或变体，无需新增 Design 条目。规则见 [对话与 Composer](design/chat.md)。
