@@ -56,6 +56,13 @@ type ProviderBrand = {
   foreground: string;
   /** Optional hairline so light badges read on white cards. */
   ring?: string;
+  /**
+   * Inline marks (model selector) default to Mono so a row of providers
+   * reads as one quiet column. A brand can opt into its Color mark there —
+   * Radius is Pace's own gateway and shares the Pi palette, so its color
+   * pieces are the point rather than noise.
+   */
+  inlineColor?: boolean;
 };
 
 function lobeBrand(icon: LobeMark): ProviderBrand {
@@ -154,6 +161,7 @@ const providerBrands: Record<string, ProviderBrand> = {
   radius: {
     Mono: RadiusMono,
     Color: RadiusColor,
+    inlineColor: true,
     background: "color-mix(in srgb, #4d9abf 14%, transparent)",
     foreground: "#4d9abf",
   },
@@ -257,8 +265,10 @@ export function ProviderMark({
     ) : null;
   }
 
+  const Mark = brand.inlineColor && brand.Color ? brand.Color : brand.Mono;
+
   return (
-    <brand.Mono
+    <Mark
       aria-hidden
       className={className}
       data-testid={`provider-mark-${providerId}`}
