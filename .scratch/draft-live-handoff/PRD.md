@@ -37,3 +37,61 @@
 
 - `bun run typecheck` / `bun run test` / `bun run build` 绿。
 - 用 `bun run dev:mock` + Playwright 录一段提交过程的连续截图（每 100ms 一张，共 1.5s）放到 `.scratch/draft-live-handoff/frames/`，用于人工检查是否有任何一帧出现宽度、高度或控件位置跳变。
+
+---
+
+# v2：Location 行（2026-09-20 决策，取代上文 footer crossfade 方案）
+
+原型：三个位置变体（Below / Cursor / Above）比较后选 **Below**。理由：用户通常从 Project 列表点新建对话，Location 很少需要操作，行在框下、跟着框一起滑最连贯。
+
+## 轴的划分（不能混）
+
+- **Project**：draft 的输入。live 时会话已隐含，**不显示**。
+- **Location**：项目在哪跑，Project folder / Worktree，以后 Remote。和分支正交。
+- **Branch**：git 分支。draft 阶段也有意义：Project folder 时是当前分支（可切，即原目录 checkout）；Worktree 时是新 worktree 的**基准分支**，显示为 "from main"。live 时是实际分支（沿用现有 `GitBranchPicker`）。
+
+## 布局
+
+```
+        Build something useful with Pace
+               📁 Pace-Mock ▾               ← draft 独有，随 hero 一起淡出上移
+   ┌────────────────────────────────────┐
+   │ Do anything with Pi                │
+   │ +  ◐ DeepSeek V4.1 Flash · Medium ▾   ↑ │
+   └────────────────────────────────────┘
+   [💻 Worktree ▾]  [⎇ from main ▾]        ( ○ )   ← footer，两态内容一致
+```
+
+规则：**draft 独有的东西在框上方，随 hero 消失；会一直存在的东西在框里和框下。** composer 从 draft 到 live 不做任何内容替换。
+
+## Footer 两态
+
+| 槽 | draft | live |
+|---|---|---|
+| Location | 可选（Project folder / Worktree） | 冻结为标签，去掉 chevron（动画：chevron opacity+width→0） |
+| Branch | Project folder：当前分支，可切；Worktree："from <base>"，可选基准 | 现有 `GitBranchPicker` |
+| 用量环 | 存在，空的、灰的 | 填充 |
+| Chat 工作区 | Location 显示 "Chat"（同 ghost chrome，带图标），Branch 不渲染 | 同左 |
+
+Branch chip 文字加截断上限（约 16rem），44rem 下长分支名不能把环挤出去。
+
+## 需要新增的数据
+
+draft 阶段要读目标项目的当前分支和分支列表。先查现有 IPC（`get_session_changes` 是 session 级；看 `packages/backend/src/workspace` 有没有 project 级的 git 读取）。没有就加一个 project 级命令（如 `get_project_git_summary(projectRoot)` → `{ branch, branches }`），走现有 workspace/git 模块，不要在渲染层拼 git 命令。切换项目时重新读取；Chat 工作区不读。
+
+## 对上文 v1 实现的处理
+
+- **删除**：`PromptInputFooter` crossfade、`footerKey`、`composerFooterKey`、"creation-target / bound / branch" 三态、live footer 里的 `live-session-creation-target` project 标签、Design 页对应的 footer 交换 demo、chat.md 里 footer slot crossfade 的描述。
+- **保留**：44rem 统一、`accent="brand"` + `accentFocusRing`、创建期模型 chip 常驻、hero 淡出的 exit echo、实测位置的 handoff 偏移。
+- draft 的 `ProjectPicker` 从 footer 移到 hero 标题下方，进入 exit echo 一起淡出；`CheckoutStrategyPicker` 变成 footer 的 Location 槽。
+
+## 测试
+
+- draft footer 渲染 Location + Branch（Project folder 显示当前分支；Worktree 显示 "from <base>"）；Chat 工作区只有 "Chat"。
+- 提交后 live footer 的 Location 文案与 draft 一致且不可点；分支未返回前 Branch 槽保持 draft 的值，不出现空态。
+- 切换项目后 Branch 槽更新。
+- 不为动画时长或 CSS 类名写测试。
+
+## 验收
+
+同 v1：typecheck / test / build 绿，`bun run dev:mock` + Playwright 帧序列放 `.scratch/draft-live-handoff/frames-v2/`，确认 footer 在所有帧中内容一致、宽高不变。
