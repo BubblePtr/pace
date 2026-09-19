@@ -34,6 +34,45 @@
   }
 }
 
+/* Brand tone: the coral -> yellow -> blue Pi mark sweep, reserved for the one
+   spot color marks "Pi is here" (see docs/design/brand.md). Overrides the
+   default grey gradient/animation rather than composing with them, so
+   Thinking…/Loading history… (which never set tone) are untouched. */
+.text-shimmer--brand {
+  /* `background-image` (not the `background` shorthand) - the shorthand
+     resets every sub-property it doesn't mention, including
+     `background-clip`, which would silently undo the base rule's
+     `background-clip: text` and paint an opaque box instead of clipped
+     letters. */
+  background-image: linear-gradient(
+    100deg,
+    var(--pi-coral) 20%,
+    var(--pi-yellow) 50%,
+    var(--pi-blue) 80%
+  );
+  background-size: 200% 100%;
+  animation: chat-text-shimmer-brand var(--duration-slow-max) linear infinite;
+}
+
+@keyframes chat-text-shimmer-brand {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced motion still wants the three-color brand mark, just static -
+     unlike the default tone, which degrades to plain grey text. */
+  .text-shimmer--brand {
+    animation: none;
+    background-size: 100% 100%;
+    background-position: 0 0;
+  }
+}
+
 /* —— Markdown —— */
 
 /* Layout is ours; heading type scale is too. Astryx compact only tightens
@@ -824,6 +863,68 @@
   text-align: center;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+/* —— Prompt input, brand accent ——
+   Opt-in Pi-mark ring (docs/design/brand.md); only the session-draft empty
+   state composer sets accent="brand". A masked ::after ring keeps the
+   gradient to a 1px border without adding layout size - the alternative,
+   an actual `border`, would shift the composer's padding/geometry that the
+   shell's radius math above depends on. Idle state (no focus, not sending)
+   stays fully transparent so this is visually inert everywhere else. */
+.prompt-input[data-accent="brand"] .astryx-chat-composer {
+  position: relative;
+}
+
+.prompt-input[data-accent="brand"] .astryx-chat-composer::after {
+  content: "";
+  position: absolute;
+  /* Astryx's own composer card (the direct child holding the textarea) sets
+     z-index: 2 inside this same stacking context (this element establishes
+     one via its own z-index: 0), so the ring needs a higher z-index or the
+     opaque card paints straight over it. */
+  z-index: 3;
+  inset: 0;
+  border-radius: var(--_chat-composer-radius);
+  padding: var(--border-width);
+  background: linear-gradient(90deg, var(--pi-coral), var(--pi-yellow), var(--pi-blue));
+  background-size: 200% 100%;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.prompt-input[data-accent="brand"] .astryx-chat-composer:focus-within::after,
+.prompt-input[data-accent="brand"][data-status="submitted"] .astryx-chat-composer::after,
+.prompt-input[data-accent="brand"][data-status="streaming"] .astryx-chat-composer::after {
+  opacity: 1;
+}
+
+/* Flowing gradient only while actually sending; a focused-but-idle ring
+   stays static so the accent doesn't read as busy when it isn't. */
+.prompt-input[data-accent="brand"][data-status="submitted"] .astryx-chat-composer::after,
+.prompt-input[data-accent="brand"][data-status="streaming"] .astryx-chat-composer::after {
+  animation: chat-accent-flow var(--duration-slow-max) linear infinite;
+}
+
+@keyframes chat-accent-flow {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-input[data-accent="brand"] .astryx-chat-composer::after {
+    animation: none;
+  }
 }
 
 /* —— Prompt suggestions —— */

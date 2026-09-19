@@ -114,3 +114,88 @@ describe("ModelSelectorControl visibility", () => {
     expect(onManageModels).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ModelSelectorControl provider mark", () => {
+  it("shows the provider mark next to the model name for a known provider", () => {
+    render(
+      <ModelSelectorControl
+        controls={controls}
+        isDisabled={false}
+        onChange={() => {}}
+      />,
+    );
+
+    // Selected model is xai/grok-4, a brand with a mark in provider-icon.tsx.
+    expect(
+      within(screen.getByTestId("model-thinking-trigger")).getByTestId(
+        "provider-mark-xai",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no mark, and no placeholder, for an unknown provider", () => {
+    const unknownProviderControls: RuntimeModelControls = {
+      models: controls.models,
+      selected: {
+        // "moonshot" has no brand entry (catalog uses "moonshotai"), so it
+        // exercises the unknown-provider path.
+        provider: "moonshot",
+        modelId: "kimi-k3",
+        thinkingLevel: "off",
+      },
+    };
+
+    render(
+      <ModelSelectorControl
+        controls={unknownProviderControls}
+        isDisabled={false}
+        onChange={() => {}}
+      />,
+    );
+
+    const trigger = screen.getByTestId("model-thinking-trigger");
+
+    expect(
+      within(trigger).queryByTestId(/^provider-mark-/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows provider marks on model list rows for known providers", async () => {
+    render(
+      <ModelSelectorControl
+        controls={controls}
+        isDisabled={false}
+        onChange={() => {}}
+      />,
+    );
+
+    const { list } = await openSelector();
+
+    // anthropic and xai both have brand marks; moonshot (catalog id) does not.
+    expect(within(list).getByTestId("provider-mark-anthropic")).toBeInTheDocument();
+    expect(within(list).getByTestId("provider-mark-xai")).toBeInTheDocument();
+    expect(within(list).queryByTestId("provider-mark-moonshot")).not.toBeInTheDocument();
+  });
+
+  it("reserves the mark's slot on an unknown-provider list row so labels stay aligned", async () => {
+    render(
+      <ModelSelectorControl
+        controls={controls}
+        isDisabled={false}
+        onChange={() => {}}
+      />,
+    );
+
+    const { list } = await openSelector();
+
+    // Kimi K3 is the moonshot row (unknown brand): its row still gets a
+    // same-size placeholder box instead of no mark, so its label lines up
+    // under the anthropic/xai rows' marks.
+    const kimiRow = within(list).getByText("Kimi K3").closest("li");
+
+    expect(kimiRow).not.toBeNull();
+    expect(
+      within(kimiRow as HTMLElement).getByTestId("provider-mark-placeholder"),
+    ).toBeInTheDocument();
+  });
+});

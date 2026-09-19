@@ -97,6 +97,16 @@
 }
 
 :root {
+  /* Pi mark colors (docs/design/brand.md): the only place color is allowed
+     outside this bridge is where "Pi is present" - the empty-state title
+     shimmer and the composer's brand accent border. Values are pi.dev's
+     press-kit hex, kept verbatim for dark mode; the light-mode leg reuses
+     the same hue but lowers OKLCH lightness via CSS relative-color syntax
+     so each color still reads against a white surface (yellow needed the
+     deepest cut - #F1BE58 is too close to white at full lightness). */
+  --pi-coral: light-dark(oklch(from #f09082 calc(l - 0.2) c h), #f09082);
+  --pi-blue: light-dark(oklch(from #4d9abf calc(l - 0.14) c h), #4d9abf);
+  --pi-yellow: light-dark(oklch(from #f1be58 calc(l - 0.3) c h), #f1be58);
   --pigui-data-blue: #1677e8;
   --pigui-data-orange: #ff6a2a;
   --pigui-data-orange-strong: #f04c0c;

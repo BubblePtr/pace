@@ -8,9 +8,15 @@
 
 ## 字标资源
 
-`PaceWordmark` 位于 `apps/desktop/src/shared/ui/pace-wordmark.tsx`，直接保留确认后的六条矢量路径，不依赖字体。默认高度为 `h-6`，宽高比为 824:180，颜色继承 `currentColor`；明暗主题使用界面的 foreground，不添加阴影、渐变或玻璃效果。
+`PaceWordmark` 位于 `apps/desktop/src/shared/ui/pace-wordmark.tsx`，直接保留确认后的六条矢量路径，不依赖字体。默认高度为 `h-6`，宽高比为 824:180，颜色继承 `currentColor`；明暗主题使用界面的 foreground。字标和应用图标保持极简的黑白呈现。
 
 字标不用于工作区侧栏；Design 页保留资源预览。仅用于品牌识别，不添加点击行为。根 SVG 默认 `role="img"`、`aria-label="Pace"`，支持 `className` 与其他 SVG 属性透传。Design 页展示小尺寸和大尺寸。
+
+## Pi 强调色
+
+Pace 的 logo 与界面主体保持黑白极简，但颜色可以在"Pi 在场"的位置出现：Pi 是 Pace 唯一的引擎，用 Pi 图标的三色标记这种关系。三色取自 [pi.dev press-kit](https://pi.dev/press-kit)：珊瑚 `#F09082`、蓝 `#4D9ABF`、黄 `#F1BE58`，以 `--pi-coral` / `--pi-blue` / `--pi-yellow` 注册在 `apps/desktop/src/app/styles.css`。
+
+目前使用的位置只有两处：新会话空屏标题中的 "Pace" 字样（`TextShimmer` 的 `tone="brand"` 变体）和 composer 聚焦、发送时的三色描边。不要把三色扩散到侧栏、列表或状态文案；"Thinking…" 一类的运行态 shimmer 仍然是灰色。
 
 ## 应用图标
 

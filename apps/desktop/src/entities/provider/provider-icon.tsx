@@ -36,6 +36,8 @@ type GlyphIcon = ComponentType<{
   size?: number | string;
   className?: string;
   style?: CSSProperties;
+  "aria-hidden"?: boolean;
+  "data-testid"?: string;
 }>;
 
 type LobeMark = GlyphIcon & {
@@ -222,5 +224,45 @@ export function ProviderIcon({
     >
       <Icon size={size} />
     </span>
+  );
+}
+
+/**
+ * Bare provider glyph in currentColor, no badge surface — for inline
+ * placement next to text (model selector trigger/list rows) where the
+ * Settings badge treatment (background, ring, letter fallback) is too heavy.
+ * Unknown providers render nothing by default: there is no glyph to draw,
+ * and a letter fallback would read as a real brand mark inline.
+ *
+ * `reserveSlot` swaps that to an empty same-size box instead, for contexts
+ * (model list rows) where several marks sit in one column and an unknown
+ * provider's missing glyph must not pull its neighbouring label left.
+ */
+export function ProviderMark({
+  providerId,
+  size = 14,
+  className,
+  reserveSlot = false,
+}: {
+  providerId: string;
+  size?: number;
+  className?: string;
+  reserveSlot?: boolean;
+}) {
+  const brand = providerBrands[providerId];
+
+  if (!brand) {
+    return reserveSlot ? (
+      <span className={className} data-testid="provider-mark-placeholder" />
+    ) : null;
+  }
+
+  return (
+    <brand.Mono
+      aria-hidden
+      className={className}
+      data-testid={`provider-mark-${providerId}`}
+      size={size}
+    />
   );
 }

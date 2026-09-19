@@ -4645,12 +4645,12 @@ describe("AgentWorkspaceSessionsPage", () => {
     const suggestionItems = emptyState.querySelector(
       '[data-slot="prompt-suggestion-items"]',
     );
-    const suggestedPrompt = "Design a launch page";
+    const suggestedPrompt = "Explain this repo's architecture";
     const suggestedLabels = [
-      "Design a launch page",
-      "Summarize meeting notes",
-      "Generate a sound brief",
-      "Plan a data model",
+      "Explain this repo's architecture",
+      "Fix the failing test",
+      "Add a CLI flag with docs",
+      "Review my uncommitted changes",
     ];
     const suggestedAction = within(draftComposer).getByRole("button", {
       name: suggestedPrompt,
@@ -4727,8 +4727,8 @@ describe("AgentWorkspaceSessionsPage", () => {
       within(suggestedAction).getByTestId("session-draft-suggestion-icon"),
     ).toBeInTheDocument();
     expect(shimmerText).toHaveAttribute("data-slot", "text-shimmer");
-    expect(shimmerText).toHaveClass("text-shimmer");
-    expect(shimmerText.parentElement).toHaveClass("text-muted");
+    expect(shimmerText).toHaveClass("text-shimmer", "text-shimmer--brand");
+    expect(shimmerText).toHaveAttribute("data-tone", "brand");
     for (const label of suggestedLabels) {
       expect(
         within(draftComposer).getByRole("button", { name: label }),
@@ -4790,12 +4790,12 @@ describe("AgentWorkspaceSessionsPage", () => {
     const user = userEvent.setup();
     renderProjectSessions("/projects/pig/sessions?view=draft");
 
-    await user.click(await screen.findByRole("button", { name: "Summarize meeting notes" }));
+    await user.click(await screen.findByRole("button", { name: "Fix the failing test" }));
 
     const prompt = screen.getByPlaceholderText("Do anything with Pi");
     expect(prompt).toHaveFocus();
     await user.keyboard(" for Friday");
-    expect(prompt).toHaveValue("Summarize meeting notes for Friday");
+    expect(prompt).toHaveValue("Fix the failing test for Friday");
   });
 
   it("clears target validation when another control selects a valid chat target", async () => {

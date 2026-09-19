@@ -76,7 +76,6 @@ import { useProviderAuthStatus } from "@/entities/session/use-provider-auth-stat
 import { invoke } from "@/shared/runtime";
 import {
   Stop,
-  Box,
   ChatAdd,
   Check,
   ChevronDown,
@@ -84,10 +83,10 @@ import {
   FileDiff,
   FolderClosed,
   GitBranch,
-  LayoutAlignLeft,
   ListTree,
   RefreshCw,
-  Sparkles,
+  SquareTerminal,
+  Wrench,
 } from "@/shared/ui/icons";
 import {
   getBrowserDevelopmentSessionDraft,
@@ -1636,30 +1635,34 @@ function isRuntimeUnavailableProjection(projection: SessionProjection | null) {
   return Boolean(projection?.stale);
 }
 
+// Pace is a coding-agent workbench, so the empty-state suggestions are
+// coding tasks (not the generic "design a launch page" copy this template
+// started from) - they're what a README screenshot or a first-time user
+// should see as representative prompts.
 const SESSION_DRAFT_SUGGESTED_PROMPTS = [
   {
-    Icon: LayoutAlignLeft,
-    id: "launch-page",
-    label: "Design a launch page",
-    prompt: "Design a launch page",
-  },
-  {
     Icon: ListTree,
-    id: "meeting-notes",
-    label: "Summarize meeting notes",
-    prompt: "Summarize meeting notes",
+    id: "explain-architecture",
+    label: "Explain this repo's architecture",
+    prompt: "Explain this repo's architecture",
   },
   {
-    Icon: Sparkles,
-    id: "sound-brief",
-    label: "Generate a sound brief",
-    prompt: "Generate a sound brief",
+    Icon: Wrench,
+    id: "fix-failing-test",
+    label: "Fix the failing test",
+    prompt: "Fix the failing test",
   },
   {
-    Icon: Box,
-    id: "data-model",
-    label: "Plan a data model",
-    prompt: "Plan a data model",
+    Icon: SquareTerminal,
+    id: "add-cli-flag",
+    label: "Add a CLI flag with docs",
+    prompt: "Add a CLI flag with docs",
+  },
+  {
+    Icon: FileDiff,
+    id: "review-uncommitted-changes",
+    label: "Review my uncommitted changes",
+    prompt: "Review my uncommitted changes",
   },
 ] as const;
 
@@ -2153,13 +2156,12 @@ function SessionDraftComposer({
         <div className="flex flex-col items-center gap-2 text-center">
           <h2 className="text-center text-3xl font-normal tracking-tight text-foreground">
             Build something useful with{" "}
-            <span className="text-muted">
-              <TextShimmer>Pace</TextShimmer>
-            </span>
+            <TextShimmer tone="brand">Pace</TextShimmer>
           </h2>
         </div>
         <div className="flex w-full flex-col gap-3">
           <PromptInput
+            accent="brand"
             className="w-full"
             drawer={
               <ComposerAttachmentDrawer
