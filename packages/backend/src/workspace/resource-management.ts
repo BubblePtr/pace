@@ -1,6 +1,6 @@
 import { copyFile, cp, mkdir, lstat, readdir, realpath, rm } from "node:fs/promises";
 import { constants } from "node:fs";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type {
   AddLocalResourceInput,
@@ -13,6 +13,7 @@ import type {
   SetResourceEnabledInput,
   UpdatePackageInput,
 } from "@pace/core";
+import { packageManagerHost, pathPrefixedWithCommandDir, resolvePackageManagerCommand } from "./package-manager-command";
 
 function assertSettingsHealthy(settings: SettingsManager) {
   const errors = settings.drainErrors();
@@ -31,12 +32,33 @@ async function withPackages<T>(dir: string, action: (manager: DefaultPackageMana
   const operation = (previous ?? Promise.resolve()).catch(() => undefined).then(async () => {
     const settings = SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
     assertSettingsHealthy(settings);
+    if (!settings.getNpmCommand()?.length) {
+      const resolved = resolvePackageManagerCommand({
+        env: process.env,
+        homeDir: packageManagerHost.homeDir(),
+        isExecutable: path => packageManagerHost.isExecutable(path),
+      });
+      if (resolved) {
+        // Override the in-memory getter only — setNpmCommand would persist to settings.json.
+        settings.getNpmCommand = () => resolved;
+        // So `#!/usr/bin/env node` next to npm can resolve under Finder PATH.
+        process.env.PATH = pathPrefixedWithCommandDir(process.env.PATH, resolved[0]);
+      }
+    }
     const manager = new DefaultPackageManager({ cwd: agentDir, agentDir, settingsManager: settings });
     const progress: PackageProgressEvent[] = [];
     manager.setProgressCallback(event => progress.push({ ...event }));
     try {
       const result = await action(manager, settings);
       return { ...result, progress };
+    } catch (error) {
+      if (error instanceof Error && /spawn (npm|pnpm|bun) ENOENT/.test(error.message)) {
+        throw Object.assign(
+          new Error(`No package manager found. Pace looked for npm, pnpm and bun on PATH and in common install locations. Install one or set "npmCommand" in ${join(agentDir, "settings.json")}.`),
+          { cause: error },
+        );
+      }
+      throw error;
     } finally {
       // SDK setters enqueue locked writes; completion must mean the CLI can read them.
       await settings.flush();

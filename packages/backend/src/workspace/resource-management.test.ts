@@ -1,13 +1,14 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { CheckPackageUpdatesResult, PackageActionResult, RemovePackageResult } from "@pace/core";
 import { createBackendService } from "../service";
+import { packageManagerHost } from "./package-manager-command";
 import { addLocalResource, removeLocalResource, checkPackageUpdates, installPackage, removePackage, setResourceEnabled, updatePackage } from "./resource-management";
 
 const roots: string[] = [];
@@ -268,5 +269,51 @@ describe("local resource boundaries", () => {
     await expect(addLocalResource(f.agentDir, { path: join(f.agentDir, "source/foo.ts") })).rejects.toThrow();
     await expect(removeLocalResource(f.agentDir, { path: join(f.agentDir, "extensions/foo.ts") })).rejects.toThrow();
     expect(await readFile(join(f.agentDir, "source/foo.ts"), "utf8")).toBe("keep");
+  });
+});
+
+
+async function isolatedPackageManagerHome() {
+  const home = await mkdtemp(join(tmpdir(), "pace-pkg-home-"));
+  roots.push(home);
+  const pathDir = join(home, "empty-path");
+  await mkdir(pathDir);
+  vi.stubEnv("PATH", pathDir);
+  vi.stubEnv("HOME", home);
+  vi.spyOn(packageManagerHost, "homeDir").mockReturnValue(home);
+  const probe = packageManagerHost.isExecutable;
+  vi.spyOn(packageManagerHost, "isExecutable").mockImplementation(path => {
+    if (path.startsWith("/opt/homebrew/") || path.startsWith("/usr/local/")) return false;
+    return probe(path);
+  });
+  return home;
+}
+
+describe("package manager resolution", () => {
+  it("hands a resolved package manager to the SDK without persisting npmCommand", async () => {
+    const home = await isolatedPackageManagerHome();
+    const recordPath = join(home, "bun-argv.txt");
+    const bunPath = join(home, ".bun/bin/bun");
+    await mkdir(join(home, ".bun/bin"), { recursive: true });
+    await writeFile(
+      bunPath,
+      `#!/bin/sh\n{\n  printf '%s\\n' "$0" "$@"\n  printf 'PATH=%s\\n' "$PATH"\n} > ${JSON.stringify(recordPath)}\n`,
+    );
+    await chmod(bunPath, 0o755);
+    const f = await fixture({ packages: ["npm:some-pkg"] });
+    await f.put("npm/node_modules/some-pkg/package.json", JSON.stringify({ name: "some-pkg", version: "1.0.0" }));
+    await removePackage(f.agentDir, { source: "npm:some-pkg" });
+    const recorded = await readFile(recordPath, "utf8");
+    expect(recorded).toMatch(/uninstall/);
+    expect(recorded.split("\n").find(line => line.startsWith("PATH="))?.slice(5).split(delimiter)[0])
+      .toBe(dirname(bunPath));
+    expect(await f.read()).not.toHaveProperty("npmCommand");
+  });
+
+  it("rewrites a missing package manager spawn as an actionable error", async () => {
+    await isolatedPackageManagerHome();
+    const f = await fixture({ packages: ["npm:some-pkg"] });
+    await f.put("npm/node_modules/some-pkg/package.json", JSON.stringify({ name: "some-pkg", version: "1.0.0" }));
+    await expect(removePackage(f.agentDir, { source: "npm:some-pkg" })).rejects.toThrow(/No package manager found/);
   });
 });
