@@ -15,6 +15,30 @@ export type ChangelogRelease = {
 // Ship release notes with the app so the history is also available offline.
 export const changelogReleases: readonly ChangelogRelease[] = [
   {
+    version: "0.0.13",
+    date: "2026-09-19",
+    title: "Every Pi provider",
+    summary: "Settings now lists every provider the bundled Pi runtime supports — Radius included — with brand marks and a filter for the long API-key list.",
+    url: "https://github.com/BubblePtr/pace/releases/tag/v0.0.13",
+    changes: [
+      {
+        kind: "added",
+        title: "All Pi providers in Settings",
+        description: "Providers comes straight from the bundled Pi runtime instead of a fixed short list, so all 40 providers Pi 0.85.1 knows — Radius, GitHub Copilot, Kimi For Coding, OpenRouter, Google, Groq, Mistral and the rest — can be signed into by subscription or API key. Future Pi upgrades bring new providers along automatically.",
+      },
+      {
+        kind: "added",
+        title: "Radius sign-in",
+        description: "Log in to Earendil's Radius gateway with a subscription (browser flow) or an API key, and see its official mark on the card.",
+      },
+      {
+        kind: "improved",
+        title: "Provider cards you can scan",
+        description: "Configured providers sort to the top, every provider carries a brand mark or a letter badge, and the API Key tab has a filter box so the long list stays quick to search.",
+      },
+    ],
+  },
+  {
     version: "0.0.12",
     date: "2026-09-18",
     title: "Command the queue",
